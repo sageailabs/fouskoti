@@ -38,7 +38,7 @@ type chartContext struct {
 }
 
 type repositoryLoader interface {
-	// loadRepositoryChart loads a chart from repositoy with a URL specified
+	// loadRepositoryChart loads a chart from repository with a URL specified
 	// either in repoURL or in repoNode.
 	loadRepositoryChart(
 		repoNode *yaml.RNode,

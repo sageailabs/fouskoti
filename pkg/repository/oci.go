@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/Masterminds/semver/v3"
-	sourcev1beta2 "github.com/fluxcd/source-controller/api/v1beta2"
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/google/go-containerregistry/pkg/authn"
 	"helm.sh/helm/v3/pkg/chart"
 	helmloader "helm.sh/helm/v3/pkg/chart/loader"
@@ -129,9 +129,9 @@ func (loader *ociRepoChartLoader) loadRepositoryChart(
 	savedLogger := loader.logger
 	defer func() { loader.logger = savedLogger }()
 
-	var repo *sourcev1beta2.HelmRepository
+	var repo *sourcev1.HelmRepository
 	if repoNode != nil {
-		repo = &sourcev1beta2.HelmRepository{}
+		repo = &sourcev1.HelmRepository{}
 		err := decodeToObject(repoNode, repo)
 		if err != nil {
 			return nil, fmt.Errorf(
@@ -226,16 +226,18 @@ func (loader *ociRepoChartLoader) loadRepositoryChart(
 		}
 	}
 
-	err = registryClient.Login(
-		parsedURL.Host,
-		registry.LoginOptBasicAuth(username, password),
-	)
-	if err != nil {
-		return nil, fmt.Errorf(
-			"unable to log in to registry %s: %w",
+	if username != "" || password != "" {
+		err = registryClient.Login(
 			parsedURL.Host,
-			err,
+			registry.LoginOptBasicAuth(username, password),
 		)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"unable to log in to registry %s: %w",
+				parsedURL.Host,
+				err,
+			)
+		}
 	}
 
 	chartVersion, err := loader.getChartVersion(
