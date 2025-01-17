@@ -1,3 +1,5 @@
+// Copyright © The Sage Group plc or its licensors.
+
 package main
 
 import (
