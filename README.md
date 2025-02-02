@@ -50,6 +50,7 @@ The following options are available:
 | --credentials-file | A path to the file with chart repository credentials |
 | --kube-version     | Kubernetes version to pass to charts in `.Capabilities.KubeVersion` |
 | --api-versions     | API version list (comma separated) to pass to charts in `.Capabilities.APIVersions` |
+| --chart-cache-dir  | A path to a directory with a persistent chart cache |
 
 
 #### Authentication
@@ -109,7 +110,6 @@ ssh://git@github.com/:
 ```
 
 ## Plans
-- Add persistent chart caching.
 - Improve authentication support for Helm and OCI repositories.
 - Add recursive expansion of generated HelmRelease resources.
 - Expand the README content describing the program and its usage.
