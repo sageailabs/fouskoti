@@ -31,7 +31,7 @@ func NewExpandCommand(options *ExpandCommandOptions) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, logger := getContextAndLogger(cmd)
 			start := time.Now()
-			logger.Info("Staring expand command")
+			logger.Info("Starting expand command")
 
 			err := func() error {
 				kubeVersion, err := chartutil.ParseKubeVersion(options.kubeVersion)
