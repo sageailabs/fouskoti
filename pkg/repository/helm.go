@@ -47,8 +47,6 @@ func normalizeURL(repositoryURL string) (string, error) {
 	return u.String(), nil
 }
 
-// TODO(vlad): Add caching support.
-
 type helmRepoChartLoader struct {
 	loaderConfig
 }
