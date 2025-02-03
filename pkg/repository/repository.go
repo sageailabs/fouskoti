@@ -22,6 +22,7 @@ import (
 	"github.com/fluxcd/pkg/git/gogit"
 	"github.com/fluxcd/pkg/git/repository"
 	"helm.sh/helm/v3/pkg/chart"
+	helmloader "helm.sh/helm/v3/pkg/chart/loader"
 	"helm.sh/helm/v3/pkg/chartutil"
 	"helm.sh/helm/v3/pkg/engine"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -66,12 +67,13 @@ type gitClientFactoryFunc func(
 ) (GitClientInterface, error)
 
 type loaderConfig struct {
-	ctx              context.Context
-	logger           *slog.Logger
-	gitClientFactory gitClientFactoryFunc
-	cacheRoot        string
-	chartCache       map[string]*chart.Chart
-	credentials      Credentials
+	ctx               context.Context
+	logger            *slog.Logger
+	gitClientFactory  gitClientFactoryFunc
+	repoClientFactory repositoryClientFactoryFunc
+	cacheRoot         string
+	chartCache        map[string]*chart.Chart
+	credentials       Credentials
 }
 
 type repositoryLoaderFactory func(config loaderConfig) repositoryLoader
@@ -190,19 +192,25 @@ func decodeToObject(node *yaml.RNode, out runtime.Object) error {
 	return nil
 }
 
-func getCachePathForRepo(cacheRoot string, repoURL string) (string, error) {
-	parsedURL, err := url.Parse(repoURL)
-	if err != nil {
-		return "", fmt.Errorf("unable to parse repository URL %s: %w", repoURL, err)
+func getCachePathForRepo(cacheRoot string, repoURL string) string {
+	urlPath := strings.ReplaceAll(strings.TrimSuffix(repoURL, "/"), "/", "#")
+	return path.Join(cacheRoot, urlPath)
+}
+
+func saveChartFiles(files []*helmloader.BufferedFile, chartDir string) error {
+	for _, file := range files {
+		filePath := path.Join(chartDir, file.Name)
+		fileDir := path.Dir(filePath)
+		err := os.MkdirAll(fileDir, 0700)
+		if err != nil {
+			return fmt.Errorf("unable to create chart cache directory %s: %w", fileDir, err)
+		}
+		err = os.WriteFile(filePath, file.Data, 0660)
+		if err != nil {
+			return fmt.Errorf("unable to write cached chart file %s: %w", filePath, err)
+		}
 	}
-	urlPath := strings.TrimSuffix(parsedURL.Path, "/")
-	var repoPath string
-	if urlPath == "" {
-		repoPath = parsedURL.Host
-	} else {
-		repoPath = fmt.Sprintf("%s-%s", parsedURL.Host, urlPath)
-	}
-	return path.Join(cacheRoot, repoPath), nil
+	return nil
 }
 
 // loadRepositoryChart downloads the chart and returns it.
@@ -210,22 +218,27 @@ func loadRepositoryChart(
 	ctx context.Context,
 	logger *slog.Logger,
 	gitClientFactory gitClientFactoryFunc,
+	repoClientFactory repositoryClientFactoryFunc,
+	chartCacheDir string,
 	chartCache map[string]*chart.Chart,
 	credentials Credentials,
 	release *helmv2.HelmRelease,
 	repoNode *yaml.RNode,
 ) (*chart.Chart, error) {
-	cacheRoot, err := os.MkdirTemp("", "chart-repo-cache-")
-	if err != nil {
-		return nil, fmt.Errorf(
-			"unable to create a cache dir for repo %s/%s/%s: %w",
-			repoNode.GetKind(),
-			repoNode.GetNamespace(),
-			repoNode.GetName(),
-			err,
-		)
+	if chartCacheDir == "" {
+		var err error
+		chartCacheDir, err = os.MkdirTemp("", "chart-repo-cache-")
+		if err != nil {
+			return nil, fmt.Errorf(
+				"unable to create a cache dir for repo %s/%s/%s: %w",
+				repoNode.GetKind(),
+				repoNode.GetNamespace(),
+				repoNode.GetName(),
+				err,
+			)
+		}
+		defer os.RemoveAll(chartCacheDir)
 	}
-	defer os.RemoveAll(cacheRoot) // TODO(vlad): Find way to persist the cache.
 
 	loader, err := getLoaderForRepo(
 		repoNode,
@@ -233,7 +246,8 @@ func loadRepositoryChart(
 			ctx,
 			logger,
 			gitClientFactory,
-			cacheRoot,
+			repoClientFactory,
+			chartCacheDir,
 			chartCache,
 			credentials,
 		},
@@ -328,8 +342,10 @@ func expandHelmRelease(
 	ctx context.Context,
 	logger *slog.Logger,
 	gitClientFactory gitClientFactoryFunc,
+	repoClientFactory repositoryClientFactoryFunc,
 	kubeVersion *chartutil.KubeVersion,
 	apiVersions []string,
+	chartCacheDir string,
 	chartCache map[string]*chart.Chart,
 	credentials Credentials,
 	releaseNode *yaml.RNode,
@@ -356,6 +372,8 @@ func expandHelmRelease(
 		ctx,
 		logger,
 		gitClientFactory,
+		repoClientFactory,
+		chartCacheDir,
 		chartCache,
 		credentials,
 		&release,
@@ -568,35 +586,41 @@ func (filter *releaseRepoFilter) Filter(
 }
 
 type releaseRepoRenderer struct {
-	ctx              context.Context
-	logger           *slog.Logger
-	gitClientFactory gitClientFactoryFunc
-	kubeVersion      *chartutil.KubeVersion
-	apiVersions      []string
-	chartCache       map[string]*chart.Chart
-	credentials      Credentials
-	pairs            *[]releaseRepo
+	ctx               context.Context
+	logger            *slog.Logger
+	gitClientFactory  gitClientFactoryFunc
+	repoClientFactory repositoryClientFactoryFunc
+	kubeVersion       *chartutil.KubeVersion
+	apiVersions       []string
+	chartCacheDir     string
+	chartCache        map[string]*chart.Chart
+	credentials       Credentials
+	pairs             *[]releaseRepo
 }
 
 func newReleaseRepoRenderer(
 	ctx context.Context,
 	logger *slog.Logger,
 	gitClientFactory gitClientFactoryFunc,
+	repoClientFactory repositoryClientFactoryFunc,
 	kubeVersion *chartutil.KubeVersion,
 	apiVersions []string,
+	chartCacheDir string,
 	chartCache map[string]*chart.Chart,
 	credentials Credentials,
 	pairs *[]releaseRepo,
 ) *releaseRepoRenderer {
 	return &releaseRepoRenderer{
-		ctx:              ctx,
-		logger:           logger,
-		gitClientFactory: gitClientFactory,
-		kubeVersion:      kubeVersion,
-		apiVersions:      apiVersions,
-		chartCache:       chartCache,
-		credentials:      credentials,
-		pairs:            pairs,
+		ctx:               ctx,
+		logger:            logger,
+		gitClientFactory:  gitClientFactory,
+		repoClientFactory: repoClientFactory,
+		kubeVersion:       kubeVersion,
+		apiVersions:       apiVersions,
+		chartCacheDir:     chartCacheDir,
+		chartCache:        chartCache,
+		credentials:       credentials,
+		pairs:             pairs,
 	}
 }
 
@@ -610,8 +634,10 @@ func (renderer *releaseRepoRenderer) Filter(
 			renderer.ctx,
 			renderer.logger,
 			renderer.gitClientFactory,
+			renderer.repoClientFactory,
 			renderer.kubeVersion,
 			renderer.apiVersions,
+			renderer.chartCacheDir,
 			renderer.chartCache,
 			renderer.credentials,
 			pair.release,
@@ -665,20 +691,23 @@ func (renderer *releaseRepoRenderer) Filter(
 }
 
 type HelmReleaseExpander struct {
-	ctx              context.Context
-	logger           *slog.Logger
-	gitClientFactory gitClientFactoryFunc
+	ctx               context.Context
+	logger            *slog.Logger
+	gitClientFactory  gitClientFactoryFunc
+	repoClientFactory repositoryClientFactoryFunc
 }
 
 func NewHelmReleaseExpander(
 	ctx context.Context,
 	logger *slog.Logger,
 	gitClientFactory gitClientFactoryFunc,
+	repoClientFactory repositoryClientFactoryFunc,
 ) *HelmReleaseExpander {
 	return &HelmReleaseExpander{
-		ctx:              ctx,
-		logger:           logger,
-		gitClientFactory: gitClientFactory,
+		ctx:               ctx,
+		logger:            logger,
+		gitClientFactory:  gitClientFactory,
+		repoClientFactory: repoClientFactory,
 	}
 }
 
@@ -688,6 +717,7 @@ func (expander *HelmReleaseExpander) ExpandHelmReleases(
 	output io.Writer,
 	kubeVersion *chartutil.KubeVersion,
 	apiVersions []string,
+	chartCacheDir string,
 	enableChartInMemoryCache bool,
 ) error {
 	var chartCache map[string]*chart.Chart
@@ -701,8 +731,10 @@ func (expander *HelmReleaseExpander) ExpandHelmReleases(
 		expander.ctx,
 		expander.logger,
 		expander.gitClientFactory,
+		expander.repoClientFactory,
 		kubeVersion,
 		apiVersions,
+		chartCacheDir,
 		chartCache,
 		credentials,
 		&pairs,

@@ -5,6 +5,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/fluxcd/pkg/git"
 	"github.com/fluxcd/pkg/git/gogit"
@@ -18,6 +19,7 @@ type ExpandCommandOptions struct {
 	credentialsFileName string
 	kubeVersion         string
 	apiVersions         []string
+	chartCacheDir       string
 }
 
 const ExpandCommandName = "expand"
@@ -28,66 +30,72 @@ func NewExpandCommand(options *ExpandCommandOptions) *cobra.Command {
 		Short: "Expands HelmRelease objects into generated templates",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, logger := getContextAndLogger(cmd)
-			logger.Info("Staring expand command")
-			defer logger.Info("Finished expand command")
+			start := time.Now()
+			logger.Info("Starting expand command")
 
-			kubeVersion, err := chartutil.ParseKubeVersion(options.kubeVersion)
-			if err != nil {
-				return fmt.Errorf(
-					"invalid --kube-version value %s: %w",
-					options.kubeVersion,
-					err,
+			err := func() error {
+				kubeVersion, err := chartutil.ParseKubeVersion(options.kubeVersion)
+				if err != nil {
+					return fmt.Errorf(
+						"invalid --kube-version value %s: %w",
+						options.kubeVersion,
+						err,
+					)
+				}
+
+				input, err := getYAMLInputReader(args)
+				if err != nil {
+					return err
+				}
+				defer input.Close()
+
+				credentials := repository.Credentials{}
+
+				if options.credentialsFileName != "" {
+					credsFile, err := os.Open(options.credentialsFileName)
+					if err != nil {
+						return fmt.Errorf(
+							"unable to open credentials file %s: %w",
+							options.credentialsFileName,
+							err,
+						)
+					}
+					defer credsFile.Close()
+
+					credentials, err = repository.ReadCredentials(credsFile)
+					if err != nil {
+						return fmt.Errorf(
+							"unable to read credentials from %s: %w",
+							options.credentialsFileName,
+							err,
+						)
+					}
+				}
+
+				expander := repository.NewHelmReleaseExpander(
+					ctx,
+					logger,
+					func(
+						path string,
+						authOpts *git.AuthOptions,
+						clientOpts ...gogit.ClientOption,
+					) (repository.GitClientInterface, error) {
+						return gogit.NewClient(path, authOpts, clientOpts...)
+					},
+					repository.NewOciRepositoryClient,
 				)
-			}
-
-			input, err := getYAMLInputReader(args)
-			if err != nil {
-				return err
-			}
-			defer input.Close()
-
-			credentials := repository.Credentials{}
-
-			if options.credentialsFileName != "" {
-				credsFile, err := os.Open(options.credentialsFileName)
-				if err != nil {
-					return fmt.Errorf(
-						"unable to open credentials file %s: %w",
-						options.credentialsFileName,
-						err,
-					)
-				}
-				defer credsFile.Close()
-
-				credentials, err = repository.ReadCredentials(credsFile)
-				if err != nil {
-					return fmt.Errorf(
-						"unable to read credentials from %s: %w",
-						options.credentialsFileName,
-						err,
-					)
-				}
-			}
-
-			expander := repository.NewHelmReleaseExpander(
-				ctx,
-				logger,
-				func(
-					path string,
-					authOpts *git.AuthOptions,
-					clientOpts ...gogit.ClientOption,
-				) (repository.GitClientInterface, error) {
-					return gogit.NewClient(path, authOpts, clientOpts...)
-				},
-			)
-			return expander.ExpandHelmReleases(
-				credentials,
-				input,
-				os.Stdout,
-				kubeVersion,
-				options.apiVersions,
-				true,
-			)
+				return expander.ExpandHelmReleases(
+					credentials,
+					input,
+					os.Stdout,
+					kubeVersion,
+					options.apiVersions,
+					options.chartCacheDir,
+					true,
+				)
+			}()
+			logger.With("duration", time.Since(start)).Info("Finished expand command")
+			return err
 		},
 		SilenceUsage: true,
 	}
@@ -111,6 +119,13 @@ func NewExpandCommand(options *ExpandCommandOptions) *cobra.Command {
 		"",
 		[]string{},
 		"Kubernetes api versions used for Capabilities.APIVersions in charts",
+	)
+	command.PersistentFlags().StringVarP(
+		&options.chartCacheDir,
+		"chart-cache-dir",
+		"",
+		"",
+		"Directory to cache Helm charts",
 	)
 
 	return command

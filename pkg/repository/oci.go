@@ -3,8 +3,10 @@
 package repository
 
 import (
+	"bytes"
 	"fmt"
 	"net/url"
+	"os"
 	"path"
 	"sort"
 	"strings"
@@ -92,7 +94,7 @@ func getLatestMatchingVersion(
 }
 
 func (loader *ociRepoChartLoader) getChartVersion(
-	client *registry.Client,
+	client repositoryClient,
 	repoURL string,
 	chartName string,
 	chartVersionSpec string,
@@ -119,6 +121,67 @@ func (loader *ociRepoChartLoader) getChartVersion(
 		)
 	}
 	return result, nil
+}
+
+func getChartPath(
+	repoPath string,
+	chartName string,
+	chartVersion string,
+) string {
+	return path.Join(repoPath, fmt.Sprintf("%s-%s", chartName, chartVersion))
+}
+
+type repositoryClient interface {
+	Login(registryHost string, username string, password string) error
+	Tags(chartRef string) ([]string, error)
+	Get(chartRef string) (*bytes.Buffer, error)
+}
+
+type ociRepoClient struct {
+	client registry.Client
+}
+
+type repositoryClientFactoryFunc func(insecure bool) (repositoryClient, error)
+
+func NewOciRepositoryClient(insecure bool) (repositoryClient, error) {
+	options := []registry.ClientOption{}
+	if insecure {
+		options = append(options, registry.ClientOptPlainHTTP())
+	}
+	registryClient, err := registry.NewClient(options...)
+	if err != nil {
+		return nil, fmt.Errorf("unable to create registry client: %w", err)
+	}
+	return &ociRepoClient{client: *registryClient}, nil
+}
+
+func (client *ociRepoClient) Login(
+	registryHost string,
+	username string,
+	password string,
+) error {
+	return client.client.Login(
+		registryHost,
+		registry.LoginOptBasicAuth(username, password),
+	)
+}
+
+func (client *ociRepoClient) Tags(chartRef string) ([]string, error) {
+	return client.client.Tags(chartRef)
+}
+
+func (client *ociRepoClient) Get(chartRef string) (*bytes.Buffer, error) {
+	getter, err := helmgetter.NewOCIGetter(
+		helmgetter.WithRegistryClient(&client.client),
+	)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"unable to create Helm getter for %s: %w",
+			chartRef,
+			err,
+		)
+	}
+	return getter.Get(chartRef)
 }
 
 func (loader *ociRepoChartLoader) loadRepositoryChart(
@@ -168,16 +231,7 @@ func (loader *ociRepoChartLoader) loadRepositoryChart(
 		With("version", chartVersionSpec).
 		Debug("Loading chart from OCI Helm repository")
 
-	// TODO(vlad): Implement chart caching.
-	_, err = getCachePathForRepo(loader.cacheRoot, repoURL)
-	if err != nil {
-		return nil, fmt.Errorf(
-			"unable to get cache path for Helm repository %s: %w",
-			repoURL,
-			err,
-		)
-	}
-
+	repoPath := getCachePathForRepo(loader.cacheRoot, repoURL)
 	parsedURL, err := url.Parse(repoURL)
 	if err != nil {
 		return nil, fmt.Errorf(
@@ -187,10 +241,10 @@ func (loader *ociRepoChartLoader) loadRepositoryChart(
 		)
 	}
 
-	registryClient, err := registry.NewClient()
+	repoClient, err := loader.repoClientFactory(repo.Spec.Insecure)
 	if err != nil {
 		return nil, fmt.Errorf(
-			"unable to create registry client: %w",
+			"unable to create repository client: %w",
 			err,
 		)
 	}
@@ -229,10 +283,7 @@ func (loader *ociRepoChartLoader) loadRepositoryChart(
 	}
 
 	if username != "" || password != "" {
-		err = registryClient.Login(
-			parsedURL.Host,
-			registry.LoginOptBasicAuth(username, password),
-		)
+		err = repoClient.Login(parsedURL.Host, username, password)
 		if err != nil {
 			return nil, fmt.Errorf(
 				"unable to log in to registry %s: %w",
@@ -243,7 +294,7 @@ func (loader *ociRepoChartLoader) loadRepositoryChart(
 	}
 
 	chartVersion, err := loader.getChartVersion(
-		registryClient,
+		repoClient,
 		repoURL,
 		chartName,
 		chartVersionSpec,
@@ -258,6 +309,7 @@ func (loader *ociRepoChartLoader) loadRepositoryChart(
 		)
 	}
 
+	chartPath := getChartPath(repoPath, chartName, chartVersion)
 	chartKey := fmt.Sprintf("%s#%s#%s", repoURL, chartName, chartVersion)
 	if loader.chartCache != nil {
 		if chart, ok := loader.chartCache[chartKey]; ok {
@@ -268,15 +320,19 @@ func (loader *ociRepoChartLoader) loadRepositoryChart(
 		}
 	}
 
-	getter, err := helmgetter.NewOCIGetter(
-		helmgetter.WithRegistryClient(registryClient),
-	)
-	if err != nil {
-		return nil, fmt.Errorf(
-			"unable to create Helm getter for %s: %w",
-			repoURL,
-			err,
-		)
+	if stat, err := os.Stat(chartPath); err == nil && stat.IsDir() {
+		loader.logger.
+			With("version", chartVersion).
+			Debug("Using chart from file cache")
+		chart, err := helmloader.LoadDir(chartPath)
+		if err != nil {
+			loader.logger.
+				With("error", err).
+				With("version", chartVersion).
+				Error("Unable to load chart from file cache")
+			os.RemoveAll(chartPath)
+		}
+		return chart, nil
 	}
 
 	chartRef := fmt.Sprintf(
@@ -285,7 +341,7 @@ func (loader *ociRepoChartLoader) loadRepositoryChart(
 		chartVersion,
 	)
 
-	chartData, err := getter.Get(chartRef)
+	chartData, err := repoClient.Get(chartRef)
 	if err != nil {
 		return nil, fmt.Errorf(
 			"unable to download chart %s for version constraint %s: %w",
@@ -295,10 +351,32 @@ func (loader *ociRepoChartLoader) loadRepositoryChart(
 		)
 	}
 
-	chart, err := helmloader.LoadArchive(chartData)
+	files, err := helmloader.LoadArchiveFiles(chartData)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"unable to load chart files from archive for chart %s/%s in %s: %w",
+			chartName,
+			chartVersion,
+			repoURL,
+			err,
+		)
+	}
+
+	chart, err := helmloader.LoadFiles(files)
 	if err != nil {
 		return nil, fmt.Errorf(
 			"unable to load chart %s/%s in %s: %w",
+			chartName,
+			chartVersion,
+			repoURL,
+			err,
+		)
+	}
+
+	err = saveChartFiles(files, chartPath)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"unable to save chart files to cache for chart %s/%s in %s: %w",
 			chartName,
 			chartVersion,
 			repoURL,

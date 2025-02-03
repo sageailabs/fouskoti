@@ -5,14 +5,18 @@ package repository
 import (
 	"fmt"
 	"net/url"
+	"os"
 	"path"
+	"path/filepath"
 	"strings"
+	"time"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"helm.sh/helm/v3/pkg/chart"
 	helmloader "helm.sh/helm/v3/pkg/chart/loader"
 	"helm.sh/helm/v3/pkg/cli"
 	helmgetter "helm.sh/helm/v3/pkg/getter"
+	"helm.sh/helm/v3/pkg/helmpath"
 	"helm.sh/helm/v3/pkg/registry"
 	helmrepo "helm.sh/helm/v3/pkg/repo"
 	"sigs.k8s.io/kustomize/kyaml/yaml"
@@ -43,8 +47,6 @@ func normalizeURL(repositoryURL string) (string, error) {
 	return u.String(), nil
 }
 
-// TODO(vlad): Add caching support.
-
 type helmRepoChartLoader struct {
 	loaderConfig
 }
@@ -60,6 +62,7 @@ func (loader *helmRepoChartLoader) loadRepositoryChart(
 	chartName string,
 	chartVersionSpec string,
 ) (*chart.Chart, error) {
+	start := time.Now()
 	savedLogger := loader.logger
 	defer func() { loader.logger = savedLogger }()
 
@@ -97,19 +100,11 @@ func (loader *helmRepoChartLoader) loadRepositoryChart(
 	)
 	loader.logger.Debug("Loading chart from Helm repository")
 
-	repoPath, err := getCachePathForRepo(loader.cacheRoot, repoURL)
-	if err != nil {
-		return nil, fmt.Errorf(
-			"unable to get cache path for Helm repository %s: %w",
-			repoURL,
-			err,
-		)
-	}
-
+	repoPath := getCachePathForRepo(loader.cacheRoot, repoURL)
 	getters := helmgetter.All(&cli.EnvSettings{})
 	chartRepo, err := helmrepo.NewChartRepository(
 		&helmrepo.Entry{
-			Name: path.Join(repoPath, "repo"),
+			Name: "repo",
 			URL:  repoURL,
 			// TODO(vlad): Use chart repository options when provided.
 		},
@@ -118,15 +113,22 @@ func (loader *helmRepoChartLoader) loadRepositoryChart(
 	if err != nil {
 		return nil, fmt.Errorf("unable to create chart repository object: %w", err)
 	}
+
 	chartRepo.CachePath = repoPath
 
-	indexFilePath, err := chartRepo.DownloadIndexFile()
-	if err != nil {
-		return nil, fmt.Errorf(
-			"unable to download index file for Helm repository %s: %w",
-			repoURL,
-			err,
-		)
+	indexFilePath := filepath.Join(
+		repoPath,
+		helmpath.CacheIndexFile(chartRepo.Config.Name),
+	)
+	if _, err := os.Stat(indexFilePath); os.IsNotExist(err) {
+		indexFilePath, err = chartRepo.DownloadIndexFile()
+		if err != nil {
+			return nil, fmt.Errorf(
+				"unable to download index file for Helm repository %s: %w",
+				repoURL,
+				err,
+			)
+		}
 	}
 	repoIndex, err := helmrepo.LoadIndexFile(indexFilePath)
 	if err != nil {
@@ -157,53 +159,92 @@ func (loader *helmRepoChartLoader) loadRepositoryChart(
 		}
 	}
 
-	parsedURL, err := url.Parse(version.URLs[0])
-	if err != nil {
-		return nil, fmt.Errorf(
-			"unable to parse chart URL %s: %w",
-			version.URLs[0],
-			err,
-		)
-	}
-	if parsedURL.Host == "" && !path.IsAbs(parsedURL.Path) {
-		// Adjust the URL to be absolute.
-		parsedRepoURL, _ := url.Parse(repoURL)
-		parsedRepoURL.Path = path.Join(parsedRepoURL.Path, parsedURL.Path)
-		parsedURL = parsedRepoURL
+	chartDir := filepath.Join(
+		chartRepo.CachePath,
+		fmt.Sprintf("%s-%s", chartName, chartVersion),
+	)
+	var chart *chart.Chart
+	var stat os.FileInfo
+	if stat, err = os.Stat(chartDir); err == nil && stat.IsDir() {
+		chart, err = helmloader.LoadDir(chartDir)
 	}
 
-	getter, err := getters.ByScheme(parsedURL.Scheme)
 	if err != nil {
-		return nil, fmt.Errorf(
-			"unknown scheme %s for chart %s: %w",
-			parsedURL.Scheme,
-			version.URLs[0],
-			err,
-		)
-	}
+		os.RemoveAll(chartDir)
 
-	chartData, err := getter.Get(
-		parsedURL.String(),
-		[]helmgetter.Option{}...) // TODO(vlad): Set options if necessary.
-	if err != nil {
-		return nil, fmt.Errorf(
-			"unable to download chart %s: %w",
+		parsedURL, err := url.Parse(version.URLs[0])
+		if err != nil {
+			return nil, fmt.Errorf(
+				"unable to parse chart URL %s: %w",
+				version.URLs[0],
+				err,
+			)
+		}
+		if parsedURL.Host == "" && !path.IsAbs(parsedURL.Path) {
+			// Adjust the URL to be absolute.
+			parsedRepoURL, _ := url.Parse(repoURL)
+			parsedRepoURL.Path = path.Join(parsedRepoURL.Path, parsedURL.Path)
+			parsedURL = parsedRepoURL
+		}
+
+		getter, err := getters.ByScheme(parsedURL.Scheme)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"unknown scheme %s for chart %s: %w",
+				parsedURL.Scheme,
+				version.URLs[0],
+				err,
+			)
+		}
+
+		chartData, err := getter.Get(
 			parsedURL.String(),
-			err,
-		)
+			[]helmgetter.Option{}...) // TODO(vlad): Set options if necessary.
+		if err != nil {
+			return nil, fmt.Errorf(
+				"unable to download chart %s: %w",
+				parsedURL.String(),
+				err,
+			)
+		}
+
+		files, err := helmloader.LoadArchiveFiles(chartData)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"unable to load chart archive %s/%s in %s: %w",
+				chartName,
+				chartVersionSpec,
+				repoURL,
+				err,
+			)
+		}
+
+		chart, err = helmloader.LoadFiles(files)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"unable to load chart files %s/%s in %s: %w",
+				chartName,
+				chartVersionSpec,
+				repoURL,
+				err,
+			)
+		}
+
+		err = saveChartFiles(files, chartDir)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"unable to save chart files %s/%s in %s to cache: %w",
+				chartName,
+				chartVersionSpec,
+				repoURL,
+				err,
+			)
+		}
+	} else {
+		loader.logger.Debug("Using cached Helm chart")
 	}
 
-	chart, err := helmloader.LoadArchive(chartData)
-	if err != nil {
-		return nil, fmt.Errorf(
-			"unable to load chart %s/%s in %s: %w",
-			chartName,
-			chartVersionSpec,
-			repoURL,
-			err,
-		)
-	}
-
+	startDeps := time.Now()
 	loader.logger = loader.logger.WithGroup("deps")
 	err = loadChartDependencies(loader.loaderConfig, chart, nil)
 	if err != nil {
@@ -215,6 +256,9 @@ func (loader *helmRepoChartLoader) loadRepositoryChart(
 			err,
 		)
 	}
+	loader.logger.
+		With("duration", time.Since(startDeps)).
+		Debug("Finished loading deps")
 
 	if loader.chartCache != nil {
 		loader.chartCache[chartKey] = chart
@@ -222,6 +266,7 @@ func (loader *helmRepoChartLoader) loadRepositoryChart(
 
 	loader.logger.
 		With("version", chart.Metadata.Version).
+		With("duration", time.Since(start)).
 		Debug("Finished loading chart")
 	return chart, nil
 }

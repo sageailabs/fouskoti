@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"os"
 	"path"
 	"time"
 
@@ -30,11 +31,11 @@ func normalizeGitReference(
 	original *sourcev1.GitRepositoryRef,
 ) *sourcev1.GitRepositoryRef {
 	if original != nil &&
-		(original.Branch == "" ||
-			original.Tag == "" ||
-			original.SemVer == "" ||
-			original.Name == "" ||
-			original.Commit == "") {
+		(original.Branch != "" ||
+			original.Tag != "" ||
+			original.SemVer != "" ||
+			original.Name != "" ||
+			original.Commit != "") {
 		return original
 	}
 	return &sourcev1.GitRepositoryRef{Branch: "master"}
@@ -44,13 +45,22 @@ func (loader *gitRepoChartLoader) cloneRepo(
 	repo *sourcev1.GitRepository,
 	repoURL string,
 ) (string, error) {
-	repoPath, err := getCachePathForRepo(loader.cacheRoot, repoURL)
-	if err != nil {
-		return "", fmt.Errorf(
-			"unable to get cache path for Git repository %s: %w",
-			repoURL,
-			err,
-		)
+	normalizedGitRef := normalizeGitReference(repo.Spec.Reference)
+	gitRefString := fmt.Sprintf(
+		"%s#%s#%s#%s#%s",
+		normalizedGitRef.Branch,
+		normalizedGitRef.Tag,
+		normalizedGitRef.SemVer,
+		normalizedGitRef.Name,
+		normalizedGitRef.Commit,
+	)
+	// Git repositories checked out at different revisions should be cached at
+	// different paths in order to avoid cross revision contamination.
+	repoPath := path.Join(getCachePathForRepo(loader.cacheRoot, repoURL), gitRefString)
+
+	if stat, err := os.Stat(repoPath); err == nil && stat.IsDir() {
+		loader.logger.Debug("Using cached Git repository")
+		return repoPath, nil
 	}
 
 	parsedURL, err := url.Parse(repoURL)
@@ -125,17 +135,15 @@ func (loader *gitRepoChartLoader) cloneRepo(
 
 	cloneOpts := repository.CloneConfig{
 		ShallowClone: true,
+		CheckoutStrategy: repository.CheckoutStrategy{
+			Branch:  normalizedGitRef.Branch,
+			Tag:     normalizedGitRef.Tag,
+			SemVer:  normalizedGitRef.SemVer,
+			RefName: normalizedGitRef.Name,
+			Commit:  normalizedGitRef.Commit,
+		},
 	}
-	if repo.Spec.Reference != nil {
-		ref := normalizeGitReference(repo.Spec.Reference)
-		cloneOpts.CheckoutStrategy = repository.CheckoutStrategy{
-			Branch:  ref.Branch,
-			Tag:     ref.Tag,
-			SemVer:  ref.SemVer,
-			RefName: ref.Name,
-			Commit:  ref.Commit,
-		}
-	}
+
 	_, err = client.Clone(cloneCtx, repoURL, cloneOpts)
 	if err != nil {
 		return "", fmt.Errorf(
