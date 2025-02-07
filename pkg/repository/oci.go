@@ -184,6 +184,18 @@ func (client *ociRepoClient) Get(chartRef string) (*bytes.Buffer, error) {
 	return getter.Get(chartRef)
 }
 
+func isRepoInsecure(repo *sourcev1.HelmRepository, repoURL *url.URL) bool {
+	if repo != nil {
+		return repo.Spec.Insecure
+	}
+	switch repoURL.Scheme {
+	case "https":
+	case "oci":
+		return false
+	}
+	return true
+}
+
 func (loader *ociRepoChartLoader) loadRepositoryChart(
 	repoNode *yaml.RNode,
 	repoURL string,
@@ -241,7 +253,7 @@ func (loader *ociRepoChartLoader) loadRepositoryChart(
 		)
 	}
 
-	repoClient, err := loader.repoClientFactory(repo.Spec.Insecure)
+	repoClient, err := loader.repoClientFactory(isRepoInsecure(repo, parsedURL))
 	if err != nil {
 		return nil, fmt.Errorf(
 			"unable to create repository client: %w",
