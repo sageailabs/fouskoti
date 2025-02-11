@@ -3,6 +3,7 @@ package repository
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"path"
@@ -15,6 +16,14 @@ import (
 	"github.com/onsi/gomega"
 	"github.com/stretchr/testify/mock"
 )
+
+func mapSlice[T, U any](slice []T, mapFunc func(T) U) []U {
+	result := make([]U, len(slice))
+	for i, item := range slice {
+		result[i] = mapFunc(item)
+	}
+	return result
+}
 
 var _ = ginkgo.Describe("GitRepository expansion", func() {
 	var g gomega.Gomega
@@ -242,139 +251,170 @@ var _ = ginkgo.Describe("GitRepository expansion", func() {
 		))
 	})
 
-	ginkgo.It("uses file cache when provided", func() {
-		cacheRoot, err := os.MkdirTemp("", "")
-		g.Expect(err).ToNot(gomega.HaveOccurred())
-		defer os.RemoveAll(cacheRoot)
+	ginkgo.DescribeTable(
+		"uses file cache when provided and repo ref",
+		func(ref string, cacheEnabled bool, specDirName string) {
+			cacheRoot, err := os.MkdirTemp("", "")
+			g.Expect(err).ToNot(gomega.HaveOccurred())
+			defer os.RemoveAll(cacheRoot)
 
-		repoURL := "ssh://git@localhost/dummy.git"
-		input := strings.Join([]string{
-			"apiVersion: helm.toolkit.fluxcd.io/v2",
-			"kind: HelmRelease",
-			"metadata:",
-			"  namespace: testns",
-			"  name: test",
-			"spec:",
-			"  chart:",
-			"    spec:",
-			"      chart: charts/test-chart",
-			"      sourceRef:",
-			"        kind: GitRepository",
-			"        name: local",
-			"  values:",
-			"    data:",
-			"      foo: baz",
-			"---",
-			"apiVersion: source.toolkit.fluxcd.io/v1",
-			"kind: GitRepository",
-			"metadata:",
-			"  namespace: testns",
-			"  name: local",
-			"spec:",
-			"  url: " + repoURL,
-		}, "\n")
+			repoURL := "ssh://git@localhost/dummy.git"
+			input := fmt.Sprintf(strings.Join([]string{
+				"apiVersion: helm.toolkit.fluxcd.io/v2",
+				"kind: HelmRelease",
+				"metadata:",
+				"  namespace: testns",
+				"  name: test",
+				"spec:",
+				"  chart:",
+				"    spec:",
+				"      chart: charts/test-chart",
+				"      sourceRef:",
+				"        kind: GitRepository",
+				"        name: local",
+				"  values:",
+				"    data:",
+				"      foo: baz",
+				"---",
+				"apiVersion: source.toolkit.fluxcd.io/v1",
+				"kind: GitRepository",
+				"metadata:",
+				"  namespace: testns",
+				"  name: local",
+				"spec:",
+				"  url: %s",
+				"  ref: %s",
+			}, "\n"),
+				repoURL,
+				ref,
+			)
+			// Normalize the input so that we can use string comparison when ref is
+			// empty.
+			input = strings.Join(
+				mapSlice(
+					strings.Split(input, "\n"),
+					func(s string) string { return strings.TrimRight(s, " ") }),
+				"\n",
+			)
 
-		var repoRoot string
-		gitClient := &GitClientMock{}
-		// The call should only happen once even with two calls to ExpandHelmReleases.
-		gitClient.
-			On("Clone", mock.Anything, repoURL, mock.Anything).
-			Once().
-			Run(func(mock.Arguments) {
-				err := createFileTree(path.Join(repoRoot, "charts/test-chart"), chartFiles)
+			var expectedCloneCallCount = 2
+			if cacheEnabled {
+				expectedCloneCallCount = 1
+			}
+			var repoRoot string
+			gitClient := &GitClientMock{}
+			gitClient.
+				On("Clone", mock.Anything, repoURL, mock.Anything).
+				Times(expectedCloneCallCount).
+				Run(func(mock.Arguments) {
+					err := createFileTree(path.Join(repoRoot, "charts/test-chart"), chartFiles)
+					g.Expect(err).ToNot(gomega.HaveOccurred())
+				}).
+				Return(&git.Commit{Hash: git.Hash("dummy")}, nil)
+			expander := NewHelmReleaseExpander(
+				ctx,
+				logger,
+				func(
+					path string,
+					authOpts *git.AuthOptions,
+					clientOpts ...gogit.ClientOption,
+				) (GitClientInterface, error) {
+					repoRoot = path
+					return gitClient, nil
+				},
+				nil,
+			)
+			output := &bytes.Buffer{}
+			err = expander.ExpandHelmReleases(
+				getDummySSHCreds(repoURL),
+				bytes.NewBufferString(input),
+				output,
+				nil,
+				nil,
+				cacheRoot,
+				false,
+			)
+			g.Expect(err).ToNot(gomega.HaveOccurred())
+			g.Expect(output.String()).To(gomega.Equal(strings.Join([]string{
+				input,
+				"---",
+				"# Source: test-chart/templates/configmap.yaml",
+				"apiVersion: v1",
+				"kind: ConfigMap",
+				"metadata:",
+				"  namespace: testns",
+				"  name: testns-test-configmap",
+				"data:",
+				"  foo: baz",
+				"",
+			}, "\n"),
+			))
+
+			// Instantiate a second, independent instance of HelmReleaseExpander.
+			expander = NewHelmReleaseExpander(
+				ctx,
+				logger,
+				func(
+					path string,
+					authOpts *git.AuthOptions,
+					clientOpts ...gogit.ClientOption,
+				) (GitClientInterface, error) {
+					repoRoot = path
+					return gitClient, nil
+				},
+				nil,
+			)
+			output = &bytes.Buffer{}
+			err = expander.ExpandHelmReleases(
+				getDummySSHCreds(repoURL),
+				bytes.NewBufferString(input),
+				output,
+				nil,
+				nil,
+				cacheRoot,
+				false,
+			)
+			g.Expect(err).ToNot(gomega.HaveOccurred())
+			g.Expect(output.String()).To(gomega.Equal(strings.Join([]string{
+				input,
+				"---",
+				"# Source: test-chart/templates/configmap.yaml",
+				"apiVersion: v1",
+				"kind: ConfigMap",
+				"metadata:",
+				"  namespace: testns",
+				"  name: testns-test-configmap",
+				"data:",
+				"  foo: baz",
+				"",
+			}, "\n"),
+			))
+			if cacheEnabled {
+				chartDir := filepath.Join(
+					cacheRoot,
+					fmt.Sprintf(
+						"ssh:##git@localhost#dummy.git/%s/charts/test-chart",
+						specDirName,
+					),
+				)
+				g.Expect(chartDir).To(gomega.BeADirectory())
+				configmapTemplateName := filepath.Join(chartDir, "templates/configmap.yaml")
+				g.Expect(configmapTemplateName).To(gomega.BeARegularFile())
+				configmapTemplate, err := os.ReadFile(configmapTemplateName)
 				g.Expect(err).ToNot(gomega.HaveOccurred())
-			}).
-			Return(&git.Commit{Hash: git.Hash("dummy")}, nil)
-		expander := NewHelmReleaseExpander(
-			ctx,
-			logger,
-			func(
-				path string,
-				authOpts *git.AuthOptions,
-				clientOpts ...gogit.ClientOption,
-			) (GitClientInterface, error) {
-				repoRoot = path
-				return gitClient, nil
-			},
-			nil,
-		)
-		output := &bytes.Buffer{}
-		err = expander.ExpandHelmReleases(
-			getDummySSHCreds(repoURL),
-			bytes.NewBufferString(input),
-			output,
-			nil,
-			nil,
-			cacheRoot,
-			false,
-		)
-		g.Expect(err).ToNot(gomega.HaveOccurred())
-		g.Expect(output.String()).To(gomega.Equal(strings.Join([]string{
-			input,
-			"---",
-			"# Source: test-chart/templates/configmap.yaml",
-			"apiVersion: v1",
-			"kind: ConfigMap",
-			"metadata:",
-			"  namespace: testns",
-			"  name: testns-test-configmap",
-			"data:",
-			"  foo: baz",
-			"",
-		}, "\n"),
-		))
-
-		// Instantiate a second, independent instance of HelmReleaseExpander.
-		expander = NewHelmReleaseExpander(
-			ctx,
-			logger,
-			func(
-				path string,
-				authOpts *git.AuthOptions,
-				clientOpts ...gogit.ClientOption,
-			) (GitClientInterface, error) {
-				repoRoot = path
-				return gitClient, nil
-			},
-			nil,
-		)
-		output = &bytes.Buffer{}
-		err = expander.ExpandHelmReleases(
-			getDummySSHCreds(repoURL),
-			bytes.NewBufferString(input),
-			output,
-			nil,
-			nil,
-			cacheRoot,
-			false,
-		)
-		g.Expect(err).ToNot(gomega.HaveOccurred())
-		g.Expect(output.String()).To(gomega.Equal(strings.Join([]string{
-			input,
-			"---",
-			"# Source: test-chart/templates/configmap.yaml",
-			"apiVersion: v1",
-			"kind: ConfigMap",
-			"metadata:",
-			"  namespace: testns",
-			"  name: testns-test-configmap",
-			"data:",
-			"  foo: baz",
-			"",
-		}, "\n"),
-		))
-		chartDir := filepath.Join(
-			cacheRoot,
-			"ssh:##git@localhost#dummy.git/master####/charts/test-chart",
-		)
-		g.Expect(chartDir).To(gomega.BeADirectory())
-		configmapTemplateName := filepath.Join(chartDir, "templates/configmap.yaml")
-		g.Expect(configmapTemplateName).To(gomega.BeARegularFile())
-		configmapTemplate, err := os.ReadFile(configmapTemplateName)
-		g.Expect(err).ToNot(gomega.HaveOccurred())
-		g.Expect(string(configmapTemplate)).To(
-			gomega.Equal(chartFiles["templates/configmap.yaml"]))
-	})
+				g.Expect(string(configmapTemplate)).To(
+					gomega.Equal(chartFiles["templates/configmap.yaml"]))
+			}
+			gitClient.AssertExpectations(ginkgo.GinkgoT())
+		},
+		ginkgo.Entry("is default", "", false, ""),
+		ginkgo.Entry("is branch", "{branch: main}", false, ""),
+		ginkgo.Entry("is branch ref", "{name: refs/heads/main}", false, ""),
+		ginkgo.Entry("is commit", "{commit: 437909a800db720437b972dbf7911b5ffbc90be4}", true, "####437909a800db720437b972dbf7911b5ffbc90be4"),
+		ginkgo.Entry("is tag", "{tag: fixed-tag}", true, "#fixed-tag###"),
+		ginkgo.Entry("is semver", "{semver: v0.1.0}", true, "##v0.1.0##"),
+		ginkgo.Entry("is tag ref", "{name: refs/tags/fixed-tag}", true, "###refs%tags%fixed-tag#"),
+	)
 
 	ginkgo.It("handles relative dependency chart paths", func() {
 		repoURL := "ssh://git@localhost/dummy.git"
