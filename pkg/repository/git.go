@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"strings"
 	"time"
 
 	"github.com/fluxcd/pkg/git"
@@ -41,6 +42,27 @@ func normalizeGitReference(
 	return &sourcev1.GitRepositoryRef{Branch: "master"}
 }
 
+// Refer to GitRepositoryRef description in
+// https://v2-0.docs.fluxcd.io/flux/components/source/api/v1/#source.toolkit.fluxcd.io/v1.GitRepositoryRef.
+func isFixedGitReference(ref *sourcev1.GitRepositoryRef) bool {
+	if ref == nil {
+		return false
+	}
+	if ref.Commit != "" {
+		return true
+	}
+	if ref.Name != "" {
+		return strings.HasPrefix(ref.Name, "refs/tags/")
+	}
+	if ref.SemVer != "" {
+		return true
+	}
+	if ref.Tag != "" {
+		return true
+	}
+	return false
+}
+
 func (loader *gitRepoChartLoader) cloneRepo(
 	repo *sourcev1.GitRepository,
 	repoURL string,
@@ -51,16 +73,18 @@ func (loader *gitRepoChartLoader) cloneRepo(
 		normalizedGitRef.Branch,
 		normalizedGitRef.Tag,
 		normalizedGitRef.SemVer,
-		normalizedGitRef.Name,
+		strings.ReplaceAll(normalizedGitRef.Name, "/", "%"),
 		normalizedGitRef.Commit,
 	)
 	// Git repositories checked out at different revisions should be cached at
 	// different paths in order to avoid cross revision contamination.
 	repoPath := path.Join(getCachePathForRepo(loader.cacheRoot, repoURL), gitRefString)
 
-	if stat, err := os.Stat(repoPath); err == nil && stat.IsDir() {
-		loader.logger.Debug("Using cached Git repository")
-		return repoPath, nil
+	if isFixedGitReference(normalizedGitRef) {
+		if stat, err := os.Stat(repoPath); err == nil && stat.IsDir() {
+			loader.logger.Debug("Using cached Git repository")
+			return repoPath, nil
+		}
 	}
 
 	parsedURL, err := url.Parse(repoURL)
