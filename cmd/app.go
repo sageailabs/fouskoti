@@ -21,7 +21,6 @@ type RootCommandOptions struct {
 
 	VersionCommandOptions
 	ExpandCommandOptions
-	ToArrayCommandOptions
 }
 
 func parseLogLevel(level string) (slog.Level, error) {
@@ -109,7 +108,6 @@ func NewRootCommand(options *RootCommandOptions) *cobra.Command {
 	)
 	command.AddCommand(NewVersionCommand(&options.VersionCommandOptions))
 	command.AddCommand(NewExpandCommand(&options.ExpandCommandOptions))
-	command.AddCommand(NewToArrayCommand(&options.ToArrayCommandOptions))
 
 	return command
 }
