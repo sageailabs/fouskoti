@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fluxcd/pkg/git"
 	"github.com/fluxcd/pkg/git/gogit"
@@ -53,33 +54,108 @@ func createFileTree(treeRoot string, files map[string]string) error {
 	return nil
 }
 
+type fsInfo struct {
+	name string
+	mode int64
+	size int64
+	time time.Time
+}
+
+func (fileInfo fsInfo) Name() string {
+	return fileInfo.name
+}
+
+func (fileInfo fsInfo) Size() int64 {
+	return fileInfo.size
+}
+
+func (fileInfo fsInfo) Mode() fs.FileMode {
+	return os.FileMode(fileInfo.mode)
+}
+
+func (fileInfo fsInfo) ModTime() time.Time {
+	return fileInfo.time
+}
+
+func (fileInfo fsInfo) IsDir() bool {
+	return fileInfo.Mode().IsDir()
+}
+
+func (fileInfo fsInfo) Sys() any {
+	return nil
+}
+
+var _ os.FileInfo = fsInfo{}
+
+func getFileInfo(name string, content string) os.FileInfo {
+	return fsInfo{
+		name: name,
+		mode: 0,
+		size: int64(len(content)),
+		time: time.Now(),
+	}
+}
+
 func createChartArchive(
+	name string,
+	version string,
+	files map[string]string,
+) (*bytes.Buffer, error) {
+	chartArchive := &bytes.Buffer{}
+	gzipWriter := gzip.NewWriter(chartArchive)
+	defer gzipWriter.Close()
+	tarWriter := tar.NewWriter(gzipWriter)
+	defer tarWriter.Close()
+
+	for path, content := range files {
+		info := getFileInfo(filepath.Join(name, path), content)
+		header, err := tar.FileInfoHeader(info, info.Name())
+		if err != nil {
+			return nil, fmt.Errorf(
+				"unable to create tar header for file %s in chart %s-%s: %w",
+				path,
+				name,
+				version,
+				err,
+			)
+		}
+		header.Name = filepath.Join(name, path)
+		if err := tarWriter.WriteHeader(header); err != nil {
+			return nil, fmt.Errorf(
+				"unable to create tar header for file %s in chart %s-%s: %w",
+				path,
+				name,
+				version,
+				err,
+			)
+		}
+		_, err = io.Copy(tarWriter, bytes.NewBufferString(content))
+		if err != nil {
+			return nil, fmt.Errorf(
+				"unable to write file %s into archive for chart %s-%s: %w",
+				path,
+				name,
+				version,
+				err,
+			)
+		}
+	}
+
+	return chartArchive, nil
+}
+
+func createChartArchiveInDir(
 	name string,
 	version string,
 	files map[string]string,
 	dir string,
 ) error {
-	chartDir, err := os.MkdirTemp("", "")
+	buffer, err := createChartArchive(name, version, files)
 	if err != nil {
-		return fmt.Errorf(
-			"unable to create temp directory for chart %s-%s: %w",
-			name,
-			version,
-			err,
-		)
+		return fmt.Errorf("unable to create chart archive: %w", err)
 	}
-	defer os.RemoveAll(chartDir)
-	if err := createFileTree(path.Join(chartDir, name), files); err != nil {
-		return fmt.Errorf(
-			"unable to create file for chart %s-%s: %w",
-			name,
-			version,
-			err,
-		)
-	}
-
 	chartArchivePath := path.Join(dir, fmt.Sprintf("%s-%s.tgz", name, version))
-	chartArchive, err := os.Create(chartArchivePath)
+	chartArchiveFile, err := os.Create(chartArchivePath)
 	if err != nil {
 		return fmt.Errorf(
 			"unable to create chart archive file %s: %w",
@@ -87,81 +163,23 @@ func createChartArchive(
 			err,
 		)
 	}
-	gzipWriter := gzip.NewWriter(chartArchive)
-	defer gzipWriter.Close()
-	tarWriter := tar.NewWriter(gzipWriter)
-	defer tarWriter.Close()
-
-	curDir, err := os.Getwd()
+	_, err = chartArchiveFile.Write(buffer.Bytes())
 	if err != nil {
 		return fmt.Errorf(
-			"unable to get the current directory: %s",
+			"unable to write chart archive file %s: %w",
+			chartArchivePath,
 			err,
 		)
 	}
-	defer os.Chdir(curDir)
-	err = os.Chdir(chartDir)
+	err = chartArchiveFile.Close()
 	if err != nil {
 		return fmt.Errorf(
-			"unable to change directory to %s: %w",
-			chartDir,
+			"unable to save chart archive file %s: %w",
+			chartArchivePath,
 			err,
 		)
-
 	}
-	err = filepath.Walk(
-		".",
-		func(path string, info fs.FileInfo, err error) error {
-			if err != nil {
-				return err
-			}
-			if info.IsDir() {
-				return nil
-			}
-			file, err := os.Open(path)
-			if err != nil {
-				return fmt.Errorf(
-					"unable to open file %s for copying into archive for chart %s-%s: %w",
-					path,
-					name,
-					version,
-					err,
-				)
-			}
-			header, err := tar.FileInfoHeader(info, info.Name())
-			if err != nil {
-				return fmt.Errorf(
-					"unable to create tar header for file %s in chart %s-%s: %w",
-					path,
-					name,
-					version,
-					err,
-				)
-			}
-			header.Name = path
-			if err := tarWriter.WriteHeader(header); err != nil {
-				return fmt.Errorf(
-					"unable to create tar header for file %s in chart %s-%s: %w",
-					path,
-					name,
-					version,
-					err,
-				)
-			}
-			_, err = io.Copy(tarWriter, file)
-			if err != nil {
-				return fmt.Errorf(
-					"unable to write file %s into archive for chart %s-%s: %w",
-					path,
-					name,
-					version,
-					err,
-				)
-			}
-			return nil
-		},
-	)
-	return err
+	return nil
 }
 
 func indexRepository(dir string, port int) error {
@@ -194,7 +212,7 @@ func createSingleChartHelmRepository(
 	port int,
 	dir string,
 ) error {
-	err := createChartArchive(chartName, chartVersion, files, dir)
+	err := createChartArchiveInDir(chartName, chartVersion, files, dir)
 	if err != nil {
 		return fmt.Errorf(
 			"unable to create chart archive for %s-%s in %s: %w",

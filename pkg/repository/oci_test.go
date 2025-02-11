@@ -75,10 +75,9 @@ var _ = ginkgo.Describe("OCIRepository expansion", func() {
 		repoRoot, err := os.MkdirTemp("", "")
 		g.Expect(err).ToNot(gomega.HaveOccurred())
 		defer os.RemoveAll(repoRoot)
-		err = createChartArchive("test-chart", "0.1.0", chartFiles, repoRoot)
+		chartArchiveBuffer, err := createChartArchive("test-chart", "0.1.0", chartFiles)
 		g.Expect(err).ToNot(gomega.HaveOccurred())
-		chartArchive, err = os.ReadFile(filepath.Join(repoRoot, "test-chart-0.1.0.tgz"))
-		g.Expect(err).ToNot(gomega.HaveOccurred())
+		chartArchive = chartArchiveBuffer.Bytes()
 	})
 
 	ginkgo.It("expands HelmRelease from a chart in a repository", func() {
