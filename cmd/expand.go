@@ -12,7 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"helm.sh/helm/v3/pkg/chartutil"
 
-	"github.com/vladlosev/fouskoti/pkg/repository"
+	"github.com/sageailabs/fouskoti/pkg/repository"
 )
 
 type ExpandCommandOptions struct {
