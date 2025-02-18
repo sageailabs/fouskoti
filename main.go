@@ -6,7 +6,7 @@ import (
 	"os"
 	"slices"
 
-	"github.com/vladlosev/fouskoti/cmd"
+	"github.com/sageailabs/fouskoti/cmd"
 )
 
 var (

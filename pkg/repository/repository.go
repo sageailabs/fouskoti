@@ -30,7 +30,7 @@ import (
 	"sigs.k8s.io/kustomize/kyaml/kio"
 	"sigs.k8s.io/kustomize/kyaml/yaml"
 
-	yamlutil "github.com/vladlosev/fouskoti/pkg/yaml"
+	yamlutil "github.com/sageailabs/fouskoti/pkg/yaml"
 )
 
 type chartContext struct {

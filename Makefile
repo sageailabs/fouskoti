@@ -1,4 +1,4 @@
-BINARY_NAME ?= hrval
+BINARY_NAME ?= fouskoti
 
 .PHONY: build
 build:
