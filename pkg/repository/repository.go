@@ -192,9 +192,14 @@ func decodeToObject(node *yaml.RNode, out runtime.Object) error {
 	return nil
 }
 
-func getCachePathForRepo(cacheRoot string, repoURL string) string {
+func getCachePathForRepo(cacheRoot string, repoURL string, ephemeral bool) string {
 	urlPath := strings.ReplaceAll(strings.TrimSuffix(repoURL, "/"), "/", "#")
-	return path.Join(cacheRoot, urlPath)
+	parts := []string{cacheRoot}
+	if ephemeral {
+		parts = append(parts, "ephemeral")
+	}
+	parts = append(parts, urlPath)
+	return path.Join(parts...)
 }
 
 func saveChartFiles(files []*helmloader.BufferedFile, chartDir string) error {
@@ -724,6 +729,21 @@ func (expander *HelmReleaseExpander) ExpandHelmReleases(
 	if enableChartInMemoryCache {
 		chartCache = make(map[string]*chart.Chart)
 	}
+
+	// Non-fixed GitRepository references like branches are not cacheable and
+	// are left in the ephemeral subtree, which we need to clean up at the
+	// end.
+	defer func() {
+		if chartCacheDir != "" {
+			ephemeralCacheDir := filepath.Join(chartCacheDir, "ephemeral")
+			if err := os.RemoveAll(ephemeralCacheDir); err != nil {
+				expander.logger.
+					With("directory", ephemeralCacheDir).
+					With("error", err).
+					Error("Unable to clean up ephemeral repository directory")
+			}
+		}
+	}()
 
 	var pairs []releaseRepo
 	filter1 := newReleaseRepoFilter(&pairs)

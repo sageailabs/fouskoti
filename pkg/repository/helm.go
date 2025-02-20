@@ -100,7 +100,7 @@ func (loader *helmRepoChartLoader) loadRepositoryChart(
 	)
 	loader.logger.Debug("Loading chart from Helm repository")
 
-	repoPath := getCachePathForRepo(loader.cacheRoot, repoURL)
+	repoPath := getCachePathForRepo(loader.cacheRoot, repoURL, false)
 	getters := helmgetter.All(&cli.EnvSettings{})
 	chartRepo, err := helmrepo.NewChartRepository(
 		&helmrepo.Entry{

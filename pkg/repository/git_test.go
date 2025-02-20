@@ -252,7 +252,7 @@ var _ = ginkgo.Describe("GitRepository expansion", func() {
 	})
 
 	ginkgo.DescribeTable(
-		"uses file cache when provided and repo ref",
+		"uses file cache between invocations when provided and repo ref",
 		func(ref string, cacheEnabled bool, specDirName string) {
 			cacheRoot, err := os.MkdirTemp("", "")
 			g.Expect(err).ToNot(gomega.HaveOccurred())
@@ -414,6 +414,169 @@ var _ = ginkgo.Describe("GitRepository expansion", func() {
 		ginkgo.Entry("is tag", "{tag: fixed-tag}", true, "#fixed-tag###"),
 		ginkgo.Entry("is semver", "{semver: v0.1.0}", true, "##v0.1.0##"),
 		ginkgo.Entry("is tag ref", "{name: refs/tags/fixed-tag}", true, "###refs%tags%fixed-tag#"),
+	)
+
+	ginkgo.DescribeTable(
+		"reuses cached repository for different charts in the same repo repo ref",
+		func(ref string, specDirName string) {
+			cacheRoot, err := os.MkdirTemp("", "")
+			g.Expect(err).ToNot(gomega.HaveOccurred())
+			defer os.RemoveAll(cacheRoot)
+
+			chartFiles := map[string]string{
+				"charts/test-chart/Chart.yaml": strings.Join([]string{
+					"apiVersion: v2",
+					"name: test-chart",
+					"version: 0.1.0",
+				}, "\n"),
+				"charts/test-chart/values.yaml": strings.Join([]string{
+					"data:",
+					"  foo: bar",
+				}, "\n"),
+				"charts/test-chart/templates/configmap.yaml": strings.Join([]string{
+					"apiVersion: v1",
+					"kind: ConfigMap",
+					"metadata:",
+					"  namespace: {{ .Release.Namespace }}",
+					"  name: {{ .Release.Name }}-configmap",
+					"data: {{- .Values.data | toYaml | nindent 2 }}",
+				}, "\n"),
+				"charts/another-chart/Chart.yaml": strings.Join([]string{
+					"apiVersion: v2",
+					"name: another-chart",
+					"version: 0.1.0",
+				}, "\n"),
+				"charts/another-chart/values.yaml": strings.Join([]string{
+					"data:",
+					"  foo: bar",
+				}, "\n"),
+				"charts/another-chart/templates/configmap.yaml": strings.Join([]string{
+					"apiVersion: v1",
+					"kind: ConfigMap",
+					"metadata:",
+					"  namespace: {{ .Release.Namespace }}",
+					"  name: {{ .Release.Name }}-configmap",
+					"data: {{- .Values.data | toYaml | nindent 2 }}",
+				}, "\n"),
+			}
+
+			repoURL := "ssh://git@localhost/dummy.git"
+			input := fmt.Sprintf(strings.Join([]string{
+				"apiVersion: helm.toolkit.fluxcd.io/v2",
+				"kind: HelmRelease",
+				"metadata:",
+				"  namespace: testns",
+				"  name: test",
+				"spec:",
+				"  chart:",
+				"    spec:",
+				"      chart: charts/test-chart",
+				"      sourceRef:",
+				"        kind: GitRepository",
+				"        name: local",
+				"  values:",
+				"    data:",
+				"      foo: bar",
+				"---",
+				"apiVersion: helm.toolkit.fluxcd.io/v2",
+				"kind: HelmRelease",
+				"metadata:",
+				"  namespace: testns",
+				"  name: another",
+				"spec:",
+				"  chart:",
+				"    spec:",
+				"      chart: charts/another-chart",
+				"      sourceRef:",
+				"        kind: GitRepository",
+				"        name: local",
+				"  values:",
+				"    data:",
+				"      foo: baz",
+				"---",
+				"apiVersion: source.toolkit.fluxcd.io/v1",
+				"kind: GitRepository",
+				"metadata:",
+				"  namespace: testns",
+				"  name: local",
+				"spec:",
+				"  url: %s",
+				"  ref: %s",
+			}, "\n"),
+				repoURL,
+				ref,
+			)
+			// Normalize the input so that we can use string comparison when ref is
+			// empty.
+			input = strings.Join(
+				mapSlice(
+					strings.Split(input, "\n"),
+					func(s string) string { return strings.TrimRight(s, " ") }),
+				"\n",
+			)
+
+			var repoRoot string
+			gitClient := &GitClientMock{}
+			gitClient.
+				On("Clone", mock.Anything, repoURL, mock.Anything).
+				Times(1).
+				Run(func(mock.Arguments) {
+					err := createFileTree(repoRoot, chartFiles)
+					g.Expect(err).ToNot(gomega.HaveOccurred())
+				}).
+				Return(&git.Commit{Hash: git.Hash("dummy")}, nil)
+			expander := NewHelmReleaseExpander(
+				ctx,
+				logger,
+				func(
+					path string,
+					authOpts *git.AuthOptions,
+					clientOpts ...gogit.ClientOption,
+				) (GitClientInterface, error) {
+					repoRoot = path
+					return gitClient, nil
+				},
+				nil,
+			)
+			output := &bytes.Buffer{}
+			err = expander.ExpandHelmReleases(
+				getDummySSHCreds(repoURL),
+				bytes.NewBufferString(input),
+				output,
+				nil,
+				nil,
+				cacheRoot,
+				false,
+			)
+			g.Expect(err).ToNot(gomega.HaveOccurred())
+			g.Expect(output.String()).To(gomega.Equal(strings.Join([]string{
+				input,
+				"---",
+				"# Source: another-chart/templates/configmap.yaml",
+				"apiVersion: v1",
+				"kind: ConfigMap",
+				"metadata:",
+				"  namespace: testns",
+				"  name: testns-another-configmap",
+				"data:",
+				"  foo: baz",
+				"---",
+				"# Source: test-chart/templates/configmap.yaml",
+				"apiVersion: v1",
+				"kind: ConfigMap",
+				"metadata:",
+				"  namespace: testns",
+				"  name: testns-test-configmap",
+				"data:",
+				"  foo: bar",
+				"",
+			}, "\n"),
+			))
+			gitClient.AssertExpectations(ginkgo.GinkgoT())
+		},
+		ginkgo.Entry("is default", "", "master####"),
+		ginkgo.Entry("is branch", "{branch: main}", "main####"),
+		ginkgo.Entry("is branch ref", "{name: refs/heads/main}", "###refs%heads%main#"),
 	)
 
 	ginkgo.It("handles relative dependency chart paths", func() {
@@ -745,11 +908,10 @@ var _ = ginkgo.Describe("GitRepository expansion", func() {
 			},
 			nil,
 		)
-		output := &bytes.Buffer{}
 		err := expander.ExpandHelmReleases(
 			getDummySSHCreds(repoURL),
 			bytes.NewBufferString(input),
-			output,
+			&bytes.Buffer{},
 			nil,
 			nil,
 			"",
