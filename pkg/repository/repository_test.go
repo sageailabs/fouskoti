@@ -313,6 +313,10 @@ func (mock *GitClientMock) Clone(
 	config repository.CloneConfig,
 ) (*git.Commit, error) {
 	args := mock.Called(ctx, repoURL, config)
+	result0 := args.Get(0)
+	if result0 == nil {
+		return nil, args.Error(1)
+	}
 	return args.Get(0).(*git.Commit), args.Error(1)
 }
 

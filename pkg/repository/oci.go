@@ -243,7 +243,7 @@ func (loader *ociRepoChartLoader) loadRepositoryChart(
 		With("version", chartVersionSpec).
 		Debug("Loading chart from OCI Helm repository")
 
-	repoPath := getCachePathForRepo(loader.cacheRoot, repoURL)
+	repoPath := getCachePathForRepo(loader.cacheRoot, repoURL, false)
 	parsedURL, err := url.Parse(repoURL)
 	if err != nil {
 		return nil, fmt.Errorf(

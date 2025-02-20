@@ -77,14 +77,22 @@ func (loader *gitRepoChartLoader) cloneRepo(
 		normalizedGitRef.Commit,
 	)
 	// Git repositories checked out at different revisions should be cached at
-	// different paths in order to avoid cross revision contamination.
-	repoPath := path.Join(getCachePathForRepo(loader.cacheRoot, repoURL), gitRefString)
+	// different paths in order to avoid cross revision contamination and Git
+	// repositories checked at non-fixed references (e.g., branches) cannot be
+	// cached across program invocations and should be pushed into the ephemeral
+	// subdirectory.
+	repoPath := path.Join(
+		getCachePathForRepo(
+			loader.cacheRoot,
+			repoURL,
+			!isFixedGitReference((normalizedGitRef)),
+		),
+		gitRefString,
+	)
 
-	if isFixedGitReference(normalizedGitRef) {
-		if stat, err := os.Stat(repoPath); err == nil && stat.IsDir() {
-			loader.logger.Debug("Using cached Git repository")
-			return repoPath, nil
-		}
+	if stat, err := os.Stat(repoPath); err == nil && stat.IsDir() {
+		loader.logger.Debug("Using cached Git repository")
+		return repoPath, nil
 	}
 
 	parsedURL, err := url.Parse(repoURL)
