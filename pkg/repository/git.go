@@ -248,6 +248,19 @@ func (loader *gitRepoChartLoader) loadRepositoryChart(
 		if err != nil {
 			return nil, err
 		}
+		if !isFixedGitReference(ref) {
+			// Non-fixed references like branches are not cacheable, so we should not
+			// leave the repository directory lying around.
+			defer func() {
+				if err = os.RemoveAll(repoPath); err != nil {
+					loader.logger.
+						With("repoPath", repoPath).
+						With("repoURL", repoURL).
+						With("error", err).
+						Error("Unable to clean up repository directory")
+				}
+			}()
+		}
 	}
 
 	chartPath := path.Join(repoPath, chartName)

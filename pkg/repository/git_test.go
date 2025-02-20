@@ -700,4 +700,63 @@ var _ = ginkgo.Describe("GitRepository expansion", func() {
 		}, "\n"),
 		))
 	})
+
+	ginkgo.It("propagates cloning errors", func() {
+		repoURL := "ssh://git@localhost/dummy.git"
+		input := strings.Join([]string{
+			"apiVersion: helm.toolkit.fluxcd.io/v2",
+			"kind: HelmRelease",
+			"metadata:",
+			"  namespace: testns",
+			"  name: test",
+			"spec:",
+			"  chart:",
+			"    spec:",
+			"      chart: charts/test-chart",
+			"      sourceRef:",
+			"        kind: GitRepository",
+			"        name: local",
+			"  values:",
+			"    data:",
+			"      foo: baz",
+			"---",
+			"apiVersion: source.toolkit.fluxcd.io/v1",
+			"kind: GitRepository",
+			"metadata:",
+			"  namespace: testns",
+			"  name: local",
+			"spec:",
+			"  url: " + repoURL,
+		}, "\n")
+
+		gitClient := &GitClientMock{}
+		gitClient.
+			On("Clone", mock.Anything, repoURL, mock.Anything).
+			Return(nil, fmt.Errorf("unspecified error"))
+		expander := NewHelmReleaseExpander(
+			ctx,
+			logger,
+			func(
+				path string,
+				authOpts *git.AuthOptions,
+				clientOpts ...gogit.ClientOption,
+			) (GitClientInterface, error) {
+				return gitClient, nil
+			},
+			nil,
+		)
+		output := &bytes.Buffer{}
+		err := expander.ExpandHelmReleases(
+			getDummySSHCreds(repoURL),
+			bytes.NewBufferString(input),
+			output,
+			nil,
+			nil,
+			"",
+			false,
+		)
+		g.Expect(err).To(
+			gomega.MatchError(gomega.ContainSubstring("unspecified error")),
+		)
+	})
 })
