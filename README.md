@@ -51,7 +51,7 @@ The following options are available:
 | --kube-version     | Kubernetes version to pass to charts in `.Capabilities.KubeVersion` |
 | --api-versions     | API version list (comma separated) to pass to charts in `.Capabilities.APIVersions` |
 | --chart-cache-dir  | A path to a directory with a persistent chart cache |
-
+| --max-expansions   | Maximum depth of recursive HelmRelease expansions to perform (when expansion produces `HelmRelease`:When resources) |
 
 #### Authentication
 
@@ -111,5 +111,4 @@ ssh://git@github.com/:
 
 ## Plans
 - Improve authentication support for Helm and OCI repositories.
-- Add recursive expansion of generated HelmRelease resources.
 - Expand the README content describing the program and its usage.

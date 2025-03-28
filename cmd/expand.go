@@ -19,6 +19,7 @@ type ExpandCommandOptions struct {
 	credentialsFileName string
 	kubeVersion         string
 	apiVersions         []string
+	maxExpansions       int
 	chartCacheDir       string
 }
 
@@ -90,6 +91,7 @@ func NewExpandCommand(options *ExpandCommandOptions) *cobra.Command {
 					os.Stdout,
 					kubeVersion,
 					options.apiVersions,
+					options.maxExpansions,
 					options.chartCacheDir,
 					true,
 				)
@@ -119,6 +121,13 @@ func NewExpandCommand(options *ExpandCommandOptions) *cobra.Command {
 		"",
 		[]string{},
 		"Kubernetes api versions used for Capabilities.APIVersions in charts",
+	)
+	command.PersistentFlags().IntVarP(
+		&options.maxExpansions,
+		"max-expansions",
+		"",
+		1,
+		"Maximum number of expansions to perform recursively",
 	)
 	command.PersistentFlags().StringVarP(
 		&options.chartCacheDir,

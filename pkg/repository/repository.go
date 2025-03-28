@@ -553,20 +553,14 @@ type releaseRepo struct {
 	repo    *yaml.RNode
 }
 
-type releaseRepoFilter struct {
-	pairs *[]releaseRepo
-}
-
-func newReleaseRepoFilter(pairs *[]releaseRepo) *releaseRepoFilter {
-	return &releaseRepoFilter{pairs: pairs}
-}
-
-func (filter *releaseRepoFilter) Filter(
-	nodes []*yaml.RNode,
-) ([]*yaml.RNode, error) {
+func getReleaseRepos(
+	repoNodes []*yaml.RNode,
+	releaseNodes []*yaml.RNode,
+) ([]releaseRepo, error) {
+	result := []releaseRepo{}
 	helmReleases := []*yaml.RNode{}
 
-	for _, node := range nodes {
+	for _, node := range releaseNodes {
 		if yamlutil.GetGroup(node) == "helm.toolkit.fluxcd.io" &&
 			node.GetKind() == "HelmRelease" {
 			helmReleases = append(helmReleases, node)
@@ -574,7 +568,7 @@ func (filter *releaseRepoFilter) Filter(
 	}
 
 	for _, helmRelease := range helmReleases {
-		repository, err := getRepositoryForHelmRelease(nodes, helmRelease)
+		repository, err := getRepositoryForHelmRelease(repoNodes, helmRelease)
 		if err != nil {
 			return nil, fmt.Errorf(
 				"unable to find repository for HelmRelease %s/%s: %w",
@@ -582,12 +576,9 @@ func (filter *releaseRepoFilter) Filter(
 				helmRelease.GetName(),
 				err)
 		}
-		*filter.pairs = append(
-			*filter.pairs,
-			releaseRepo{release: helmRelease, repo: repository},
-		)
+		result = append(result, releaseRepo{release: helmRelease, repo: repository})
 	}
-	return nodes, nil
+	return result, nil
 }
 
 type releaseRepoRenderer struct {
@@ -597,6 +588,7 @@ type releaseRepoRenderer struct {
 	repoClientFactory repositoryClientFactoryFunc
 	kubeVersion       *chartutil.KubeVersion
 	apiVersions       []string
+	maxExpansions     int
 	chartCacheDir     string
 	chartCache        map[string]*chart.Chart
 	credentials       Credentials
@@ -610,10 +602,10 @@ func newReleaseRepoRenderer(
 	repoClientFactory repositoryClientFactoryFunc,
 	kubeVersion *chartutil.KubeVersion,
 	apiVersions []string,
+	maxExpansions int,
 	chartCacheDir string,
 	chartCache map[string]*chart.Chart,
 	credentials Credentials,
-	pairs *[]releaseRepo,
 ) *releaseRepoRenderer {
 	return &releaseRepoRenderer{
 		ctx:               ctx,
@@ -622,19 +614,25 @@ func newReleaseRepoRenderer(
 		repoClientFactory: repoClientFactory,
 		kubeVersion:       kubeVersion,
 		apiVersions:       apiVersions,
+		maxExpansions:     maxExpansions,
 		chartCacheDir:     chartCacheDir,
 		chartCache:        chartCache,
 		credentials:       credentials,
-		pairs:             pairs,
 	}
 }
 
-func (renderer *releaseRepoRenderer) Filter(
-	nodes []*yaml.RNode,
-) ([]*yaml.RNode, error) {
+func (renderer *releaseRepoRenderer) filterStep(
+	allNodes []*yaml.RNode,
+	nodesToRender []*yaml.RNode,
+) ([]*yaml.RNode, []*yaml.RNode, error) {
 	result := []*yaml.RNode{}
 
-	for _, pair := range *renderer.pairs {
+	releaseRepos, err := getReleaseRepos(allNodes, nodesToRender)
+	if err != nil {
+		return nil, nil, fmt.Errorf("unable to get release repos: %w", err)
+	}
+
+	for _, pair := range releaseRepos {
 		expanded, err := expandHelmRelease(
 			renderer.ctx,
 			renderer.logger,
@@ -649,7 +647,7 @@ func (renderer *releaseRepoRenderer) Filter(
 			pair.repo,
 		)
 		if err != nil {
-			return nil, fmt.Errorf(
+			return nil, nil, fmt.Errorf(
 				"unable to expand Helm release %s/%s: %w",
 				pair.release.GetNamespace(),
 				pair.release.GetName(),
@@ -658,6 +656,7 @@ func (renderer *releaseRepoRenderer) Filter(
 		}
 		result = append(result, expanded...)
 	}
+
 	slices.SortStableFunc(result, func(a, b *yaml.RNode) int {
 		aKind := a.GetKind()
 		bKind := b.GetKind()
@@ -692,7 +691,24 @@ func (renderer *releaseRepoRenderer) Filter(
 		}
 		return 0
 	})
-	return append(nodes, result...), nil
+	return append(allNodes, result...), result, nil
+}
+
+func (renderer *releaseRepoRenderer) Filter(
+	nodes []*yaml.RNode,
+) ([]*yaml.RNode, error) {
+	newNodes := nodes
+	for range renderer.maxExpansions {
+		var err error
+		nodes, newNodes, err = renderer.filterStep(nodes, newNodes)
+		if err != nil {
+			return nil, err
+		}
+		if len(newNodes) == 0 {
+			break
+		}
+	}
+	return nodes, nil
 }
 
 type HelmReleaseExpander struct {
@@ -722,6 +738,7 @@ func (expander *HelmReleaseExpander) ExpandHelmReleases(
 	output io.Writer,
 	kubeVersion *chartutil.KubeVersion,
 	apiVersions []string,
+	maxExpansions int,
 	chartCacheDir string,
 	enableChartInMemoryCache bool,
 ) error {
@@ -745,24 +762,22 @@ func (expander *HelmReleaseExpander) ExpandHelmReleases(
 		}
 	}()
 
-	var pairs []releaseRepo
-	filter1 := newReleaseRepoFilter(&pairs)
-	filter2 := newReleaseRepoRenderer(
+	filter := newReleaseRepoRenderer(
 		expander.ctx,
 		expander.logger,
 		expander.gitClientFactory,
 		expander.repoClientFactory,
 		kubeVersion,
 		apiVersions,
+		maxExpansions,
 		chartCacheDir,
 		chartCache,
 		credentials,
-		&pairs,
 	)
 
 	return kio.Pipeline{
 		Inputs:  []kio.Reader{&kio.ByteReader{Reader: input}},
-		Filters: []kio.Filter{filter1, filter2},
+		Filters: []kio.Filter{filter},
 		Outputs: []kio.Writer{kio.ByteWriter{Writer: output}},
 	}.Execute()
 }

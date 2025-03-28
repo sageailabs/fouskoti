@@ -98,6 +98,7 @@ var _ = ginkgo.Describe("HelmRepository expansion", func() {
 			output,
 			nil,
 			nil,
+			1,
 			"",
 			false,
 		)
@@ -195,6 +196,7 @@ var _ = ginkgo.Describe("HelmRepository expansion", func() {
 			output,
 			nil,
 			nil,
+			1,
 			"",
 			true,
 		)
@@ -284,6 +286,7 @@ var _ = ginkgo.Describe("HelmRepository expansion", func() {
 			output,
 			nil,
 			nil,
+			1,
 			cacheRoot,
 			false,
 		)
@@ -313,6 +316,7 @@ var _ = ginkgo.Describe("HelmRepository expansion", func() {
 			output,
 			nil,
 			nil,
+			1,
 			cacheRoot,
 			false,
 		)
