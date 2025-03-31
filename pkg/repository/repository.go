@@ -592,7 +592,6 @@ type releaseRepoRenderer struct {
 	chartCacheDir     string
 	chartCache        map[string]*chart.Chart
 	credentials       Credentials
-	pairs             *[]releaseRepo
 }
 
 func newReleaseRepoRenderer(
