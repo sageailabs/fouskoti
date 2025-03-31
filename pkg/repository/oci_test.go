@@ -133,6 +133,7 @@ var _ = ginkgo.Describe("OCIRepository expansion", func() {
 			output,
 			nil,
 			nil,
+			1,
 			"",
 			false,
 		)
@@ -228,6 +229,7 @@ var _ = ginkgo.Describe("OCIRepository expansion", func() {
 			output,
 			nil,
 			nil,
+			1,
 			"",
 			true,
 		)
@@ -318,6 +320,7 @@ var _ = ginkgo.Describe("OCIRepository expansion", func() {
 			io.Discard,
 			nil,
 			nil,
+			1,
 			cacheRoot,
 			false,
 		)
@@ -352,6 +355,7 @@ var _ = ginkgo.Describe("OCIRepository expansion", func() {
 			output,
 			nil,
 			nil,
+			1,
 			cacheRoot,
 			false,
 		)
