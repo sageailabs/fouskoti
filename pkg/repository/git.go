@@ -31,15 +31,10 @@ func newGitRepositoryLoader(config loaderConfig) repositoryLoader {
 func normalizeGitReference(
 	original *sourcev1.GitRepositoryRef,
 ) *sourcev1.GitRepositoryRef {
-	if original != nil &&
-		(original.Branch != "" ||
-			original.Tag != "" ||
-			original.SemVer != "" ||
-			original.Name != "" ||
-			original.Commit != "") {
-		return original
+	if (original == nil || *original == sourcev1.GitRepositoryRef{}) {
+		return &sourcev1.GitRepositoryRef{Branch: "master"}
 	}
-	return &sourcev1.GitRepositoryRef{Branch: "master"}
+	return original
 }
 
 // Refer to GitRepositoryRef description in
