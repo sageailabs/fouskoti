@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -25,6 +26,7 @@ import (
 )
 
 var ociSchemePrefix string = fmt.Sprintf("%s://", registry.OCIScheme)
+var ecrRepoRegex regexp.Regexp = *regexp.MustCompile("^[0-9]+[.]dkr[.]ecr[.][a-z0-9-]+[.]amazonaws.com$")
 
 type ociRepoChartLoader struct {
 	loaderConfig
@@ -196,6 +198,13 @@ func isRepoInsecure(repo *sourcev1.HelmRepository, repoURL *url.URL) bool {
 	return true
 }
 
+func isEcrRepo(repo *sourcev1.HelmRepository, repoHost string) bool {
+	if repo != nil {
+		return repo.Spec.Provider == "aws"
+	}
+	return ecrRepoRegex.MatchString(repoHost)
+}
+
 func (loader *ociRepoChartLoader) loadRepositoryChart(
 	repoNode *yaml.RNode,
 	repoURL string,
@@ -278,20 +287,18 @@ func (loader *ociRepoChartLoader) loadRepositoryChart(
 		loader.logger.Debug("Using password from credentials file")
 	}
 
-	if username == "" || password == "" {
-		if repo != nil && repo.Spec.Provider == "aws" {
-			authConfig, err := loader.awsLogin(parsedURL.Host)
-			if err != nil {
-				return nil, fmt.Errorf(
-					"unable to log in to AWS registry %s: %w",
-					parsedURL.Host,
-					err,
-				)
-			}
-
-			username = authConfig.Username
-			password = authConfig.Password
+	if username == "" && password == "" && isEcrRepo(repo, parsedURL.Host) {
+		authConfig, err := loader.awsLogin(parsedURL.Host)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"unable to log in to AWS registry %s: %w",
+				parsedURL.Host,
+				err,
+			)
 		}
+
+		username = authConfig.Username
+		password = authConfig.Password
 	}
 
 	if username != "" || password != "" {
