@@ -367,7 +367,8 @@ func expandHelmRelease(
 
 	if repoNode == nil {
 		return nil, fmt.Errorf(
-			"missing chart repository for Helm release %s/%s",
+			"missing chart repository %s for Helm release %s/%s",
+			release.Spec.Chart.Spec.SourceRef.Name,
 			release.Namespace,
 			release.Name,
 		)
@@ -512,6 +513,17 @@ func getRepositoryForHelmRelease(
 	repoKind, err := helmRelease.GetString("spec.chart.spec.sourceRef.kind")
 	if err != nil {
 		return nil, fmt.Errorf("unable to get kind for the repository: %w", err)
+	}
+
+	switch repoKind {
+	case "GitRepository":
+	case "HelmRepository":
+	case "OCIRepository":
+		break
+	case "Bucket":
+		return nil, fmt.Errorf("unsupported chart repository kind %s", repoKind)
+	default:
+		return nil, fmt.Errorf("invalid chart repository kind %s", repoKind)
 	}
 
 	repoName, err := helmRelease.GetString("spec.chart.spec.sourceRef.name")

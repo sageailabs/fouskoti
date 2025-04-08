@@ -1288,4 +1288,150 @@ var _ = ginkgo.Describe("HelmRelease expansion check", func() {
 		}, "\n"),
 		))
 	})
+
+	ginkgo.It("rejects invalid source kind in chart source references", func() {
+		repoRoot, err := os.MkdirTemp("", "")
+		g.Expect(err).ToNot(gomega.HaveOccurred())
+		defer os.RemoveAll(repoRoot)
+
+		chartFiles := map[string]string{
+			"Chart.yaml": strings.Join([]string{
+				"apiVersion: v2",
+				"name: test-chart",
+				"version: 0.1.0",
+			}, "\n"),
+			"values.yaml": strings.Join([]string{
+				"data:",
+				"  foo: bar",
+			}, "\n"),
+			"templates/configmap.yaml": strings.Join([]string{
+				"apiVersion: v1",
+				"kind: ConfigMap",
+				"metadata:",
+				"  namespace: {{ .Release.Namespace }}",
+				"  name: {{ .Release.Name }}-configmap",
+				"data: {{- .Values.data | toYaml | nindent 2 }}",
+			}, "\n"),
+		}
+
+		server, port, serverDone, err := serveDirectory(repoRoot, logger, nil)
+		g.Expect(err).ToNot(gomega.HaveOccurred())
+		err = createSingleChartHelmRepository(
+			"test-chart",
+			"0.1.0",
+			chartFiles,
+			port,
+			repoRoot,
+		)
+		g.Expect(err).ToNot(gomega.HaveOccurred())
+
+		input := strings.Join([]string{
+			"apiVersion: helm.toolkit.fluxcd.io/v2",
+			"kind: HelmRelease",
+			"metadata:",
+			"  namespace: testns",
+			"  name: test",
+			"spec:",
+			"  chart:",
+			"    spec:",
+			"      chart: test-chart",
+			"      version: \">=0.1.0\"",
+			"      sourceRef:",
+			"        kind: Invalid",
+			"        name: local",
+			"  values:",
+			"    data:",
+			"      foo: baz",
+		}, "\n")
+
+		expander := NewHelmReleaseExpander(ctx, logger, nil, nil)
+		err = expander.ExpandHelmReleases(
+			Credentials{},
+			bytes.NewBufferString(input),
+			&bytes.Buffer{},
+			nil,
+			nil,
+			1,
+			"",
+			false,
+		)
+		g.Expect(err).To(gomega.MatchError(
+			gomega.ContainSubstring("invalid chart repository kind Invalid"),
+		))
+		err = stopServing(server, serverDone)
+		g.Expect(err).ToNot(gomega.HaveOccurred())
+	})
+
+	ginkgo.It("reports missing chart sources", func() {
+		repoRoot, err := os.MkdirTemp("", "")
+		g.Expect(err).ToNot(gomega.HaveOccurred())
+		defer os.RemoveAll(repoRoot)
+
+		chartFiles := map[string]string{
+			"Chart.yaml": strings.Join([]string{
+				"apiVersion: v2",
+				"name: test-chart",
+				"version: 0.1.0",
+			}, "\n"),
+			"values.yaml": strings.Join([]string{
+				"data:",
+				"  foo: bar",
+			}, "\n"),
+			"templates/configmap.yaml": strings.Join([]string{
+				"apiVersion: v1",
+				"kind: ConfigMap",
+				"metadata:",
+				"  namespace: {{ .Release.Namespace }}",
+				"  name: {{ .Release.Name }}-configmap",
+				"data: {{- .Values.data | toYaml | nindent 2 }}",
+			}, "\n"),
+		}
+
+		server, port, serverDone, err := serveDirectory(repoRoot, logger, nil)
+		g.Expect(err).ToNot(gomega.HaveOccurred())
+		err = createSingleChartHelmRepository(
+			"test-chart",
+			"0.1.0",
+			chartFiles,
+			port,
+			repoRoot,
+		)
+		g.Expect(err).ToNot(gomega.HaveOccurred())
+
+		input := strings.Join([]string{
+			"apiVersion: helm.toolkit.fluxcd.io/v2",
+			"kind: HelmRelease",
+			"metadata:",
+			"  namespace: testns",
+			"  name: test",
+			"spec:",
+			"  chart:",
+			"    spec:",
+			"      chart: test-chart",
+			"      version: \">=0.1.0\"",
+			"      sourceRef:",
+			"        kind: GitRepository",
+			"        name: awol",
+			"  values:",
+			"    data:",
+			"      foo: baz",
+		}, "\n")
+
+		expander := NewHelmReleaseExpander(ctx, logger, nil, nil)
+		err = expander.ExpandHelmReleases(
+			Credentials{},
+			bytes.NewBufferString(input),
+			&bytes.Buffer{},
+			nil,
+			nil,
+			1,
+			"",
+			false,
+		)
+		g.Expect(err).To(gomega.MatchError(
+			gomega.ContainSubstring("missing chart repository awol for Helm release testns/test"),
+		))
+		err = stopServing(server, serverDone)
+		g.Expect(err).ToNot(gomega.HaveOccurred())
+	})
 })
