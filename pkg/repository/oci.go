@@ -20,7 +20,8 @@ import (
 	helmgetter "helm.sh/helm/v3/pkg/getter"
 	"sigs.k8s.io/kustomize/kyaml/yaml"
 
-	"github.com/fluxcd/pkg/oci/auth/aws"
+	"github.com/fluxcd/pkg/auth/aws"
+	authutils "github.com/fluxcd/pkg/auth/utils"
 	"github.com/fluxcd/pkg/version"
 	"helm.sh/helm/v3/pkg/registry"
 )
@@ -36,8 +37,14 @@ func newOciRepositoryLoader(config loaderConfig) repositoryLoader {
 	return &ociRepoChartLoader{loaderConfig: config}
 }
 
-func (loader *ociRepoChartLoader) awsLogin(registryHost string) (*authn.AuthConfig, error) {
-	authenticator, err := aws.NewClient().Login(loader.ctx, true, registryHost)
+func (loader *ociRepoChartLoader) awsLogin(
+	registryHost string,
+) (*authn.AuthConfig, error) {
+	authenticator, err := authutils.GetArtifactRegistryCredentials(
+		loader.ctx,
+		aws.ProviderName,
+		registryHost,
+	)
 	if err != nil {
 		return nil, fmt.Errorf(
 			"unable to log into repository %s: %w",
