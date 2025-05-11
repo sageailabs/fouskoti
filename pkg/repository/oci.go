@@ -21,6 +21,8 @@ import (
 	"sigs.k8s.io/kustomize/kyaml/yaml"
 
 	"github.com/fluxcd/pkg/auth/aws"
+	"github.com/fluxcd/pkg/auth/azure"
+	"github.com/fluxcd/pkg/auth/gcp"
 	authutils "github.com/fluxcd/pkg/auth/utils"
 	"github.com/fluxcd/pkg/version"
 	"helm.sh/helm/v3/pkg/registry"
@@ -28,6 +30,8 @@ import (
 
 var ociSchemePrefix string = fmt.Sprintf("%s://", registry.OCIScheme)
 var ecrRepoRegex regexp.Regexp = *regexp.MustCompile("^[0-9]+[.]dkr[.]ecr[.][a-z0-9-]+[.]amazonaws.com$")
+var acrRepoRegex regexp.Regexp = *regexp.MustCompile("^.+[.]azurecr[.](?:io|cn|de|us)$")
+var gcrRepoRegex regexp.Regexp = *regexp.MustCompile("^(?:.+[.])?gcr[.]io|.+-docker[.]pkg[.]dev$")
 
 type ociRepoChartLoader struct {
 	loaderConfig
@@ -37,12 +41,30 @@ func newOciRepositoryLoader(config loaderConfig) repositoryLoader {
 	return &ociRepoChartLoader{loaderConfig: config}
 }
 
-func (loader *ociRepoChartLoader) awsLogin(
+func getRepoProviderName(repo *sourcev1.HelmRepository, repoHost string) string {
+	if repo != nil {
+		return repo.Spec.Provider
+	}
+	if ecrRepoRegex.MatchString(repoHost) {
+		return aws.ProviderName
+	}
+	if acrRepoRegex.MatchString(repoHost) {
+		return azure.ProviderName
+	}
+	if gcrRepoRegex.MatchString(repoHost) {
+		return gcp.ProviderName
+	}
+
+	return ""
+}
+
+func (loader *ociRepoChartLoader) providerLogin(
+	providerName string,
 	registryHost string,
 ) (*authn.AuthConfig, error) {
 	authenticator, err := authutils.GetArtifactRegistryCredentials(
 		loader.ctx,
-		aws.ProviderName,
+		providerName,
 		registryHost,
 	)
 	if err != nil {
@@ -205,13 +227,6 @@ func isRepoInsecure(repo *sourcev1.HelmRepository, repoURL *url.URL) bool {
 	return true
 }
 
-func isEcrRepo(repo *sourcev1.HelmRepository, repoHost string) bool {
-	if repo != nil {
-		return repo.Spec.Provider == "aws"
-	}
-	return ecrRepoRegex.MatchString(repoHost)
-}
-
 func (loader *ociRepoChartLoader) loadRepositoryChart(
 	repoNode *yaml.RNode,
 	repoURL string,
@@ -294,18 +309,21 @@ func (loader *ociRepoChartLoader) loadRepositoryChart(
 		loader.logger.Debug("Using password from credentials file")
 	}
 
-	if username == "" && password == "" && isEcrRepo(repo, parsedURL.Host) {
-		authConfig, err := loader.awsLogin(parsedURL.Host)
-		if err != nil {
-			return nil, fmt.Errorf(
-				"unable to log in to AWS registry %s: %w",
-				parsedURL.Host,
-				err,
-			)
-		}
+	if username == "" && password == "" {
+		providerName := getRepoProviderName(repo, parsedURL.Host)
+		if providerName != "" {
+			authConfig, err := loader.providerLogin(providerName, parsedURL.Host)
+			if err != nil {
+				return nil, fmt.Errorf(
+					"unable to log in to AWS registry %s: %w",
+					parsedURL.Host,
+					err,
+				)
+			}
 
-		username = authConfig.Username
-		password = authConfig.Password
+			username = authConfig.Username
+			password = authConfig.Password
+		}
 	}
 
 	if username != "" || password != "" {
