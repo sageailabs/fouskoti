@@ -315,7 +315,7 @@ func (loader *ociRepoChartLoader) loadRepositoryChart(
 			authConfig, err := loader.providerLogin(providerName, parsedURL.Host)
 			if err != nil {
 				return nil, fmt.Errorf(
-					"unable to log in to AWS registry %s: %w",
+					"unable to log in to the cloud registry %s: %w",
 					parsedURL.Host,
 					err,
 				)
