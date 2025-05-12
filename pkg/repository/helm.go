@@ -170,7 +170,12 @@ func (loader *helmRepoChartLoader) loadRepositoryChart(
 	}
 
 	if err != nil {
-		os.RemoveAll(chartDir)
+		if err := os.RemoveAll(chartDir); err != nil {
+			loader.logger.
+				With("error", err).
+				With("dir", chartDir).
+				Error("Unable to remove the chart cache directory")
+		}
 
 		parsedURL, err := url.Parse(version.URLs[0])
 		if err != nil {

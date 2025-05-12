@@ -374,7 +374,13 @@ func (loader *ociRepoChartLoader) loadRepositoryChart(
 				With("error", err).
 				With("version", chartVersion).
 				Error("Unable to load chart from file cache")
-			os.RemoveAll(chartPath)
+			err := os.RemoveAll(chartPath)
+			if err != nil {
+				loader.logger.
+					With("error", err).
+					With("dir", chartPath).
+					Error("Unable to clean the chart from file cache")
+			}
 		}
 		return chart, nil
 	}
