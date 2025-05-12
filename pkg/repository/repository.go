@@ -242,7 +242,14 @@ func loadRepositoryChart(
 				err,
 			)
 		}
-		defer os.RemoveAll(chartCacheDir)
+		defer func() {
+			if err := os.RemoveAll(chartCacheDir); err != nil {
+				logger.
+					With("error", err).
+					With("dir", chartCacheDir).
+					Error("Unable to clean the chart cache directory")
+			}
+		}()
 	}
 
 	loader, err := getLoaderForRepo(

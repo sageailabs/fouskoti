@@ -48,7 +48,8 @@ func getYAMLInputReader(args []string) (io.ReadCloser, error) {
 			inputs = appendDocSeparator(inputs)
 			file, err := os.Open(arg)
 			if err != nil {
-				(&yamlInputReader{closers: closers}).Close()
+				// Failures to close input files are not interesting.
+				_ = (&yamlInputReader{closers: closers}).Close()
 				return nil, fmt.Errorf("unable to open input file %s: %w", arg, err)
 			}
 			closers = append(closers, file)

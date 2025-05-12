@@ -48,7 +48,13 @@ func NewExpandCommand(options *ExpandCommandOptions) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				defer input.Close()
+				defer func() {
+					if err := input.Close(); err != nil {
+						logger.
+							With("error", err).
+							Error("Failed to close input")
+					}
+				}()
 
 				credentials := repository.Credentials{}
 
@@ -61,7 +67,7 @@ func NewExpandCommand(options *ExpandCommandOptions) *cobra.Command {
 							err,
 						)
 					}
-					defer credsFile.Close()
+					defer func() { _ = credsFile.Close() }()
 
 					credentials, err = repository.ReadCredentials(credsFile)
 					if err != nil {
