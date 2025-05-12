@@ -316,7 +316,7 @@ func (loader *ociRepoChartLoader) loadRepositoryChart(
 			if err != nil {
 				return nil, fmt.Errorf(
 					"unable to log in to the %s registry %s: %w",
-					providerName,
+					strings.ToUpper(providerName),
 					parsedURL.Host,
 					err,
 				)
