@@ -31,7 +31,7 @@ import (
 var ociSchemePrefix string = fmt.Sprintf("%s://", registry.OCIScheme)
 var ecrRepoRegex regexp.Regexp = *regexp.MustCompile("^[0-9]+[.]dkr[.]ecr[.][a-z0-9-]+[.]amazonaws.com$")
 var acrRepoRegex regexp.Regexp = *regexp.MustCompile("^.+[.]azurecr[.](?:io|cn|de|us)$")
-var gcrRepoRegex regexp.Regexp = *regexp.MustCompile("^(?:.+[.])?gcr[.]io|.+-docker[.]pkg[.]dev$")
+var gcrRepoRegex regexp.Regexp = *regexp.MustCompile("^(?:(?:.+[.])?gcr[.]io|.+-docker[.]pkg[.]dev)$")
 
 type ociRepoChartLoader struct {
 	loaderConfig
