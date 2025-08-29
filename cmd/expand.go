@@ -20,6 +20,7 @@ type ExpandCommandOptions struct {
 	kubeVersion         string
 	apiVersions         []string
 	maxExpansions       int
+	workingCopySubst    string
 	chartCacheDir       string
 }
 
@@ -79,6 +80,15 @@ func NewExpandCommand(options *ExpandCommandOptions) *cobra.Command {
 					}
 				}
 
+				subst, err := repository.ParseGitRepoSubstitution(options.workingCopySubst)
+				if err != nil {
+					return fmt.Errorf(
+						"invalid --working-copy-subst value %s: %w",
+						options.workingCopySubst,
+						err,
+					)
+				}
+
 				expander := repository.NewHelmReleaseExpander(
 					ctx,
 					logger,
@@ -97,6 +107,7 @@ func NewExpandCommand(options *ExpandCommandOptions) *cobra.Command {
 					os.Stdout,
 					kubeVersion,
 					options.apiVersions,
+					subst,
 					options.maxExpansions,
 					options.chartCacheDir,
 					true,
@@ -134,6 +145,13 @@ func NewExpandCommand(options *ExpandCommandOptions) *cobra.Command {
 		"",
 		1,
 		"Maximum number of expansions to perform recursively",
+	)
+	command.PersistentFlags().StringVarP(
+		&options.workingCopySubst,
+		"working-copy-subst",
+		"",
+		"",
+		"Substitute working copy path for git repository in the form <repo-url>#[<branch>#]<path>",
 	)
 	command.PersistentFlags().StringVarP(
 		&options.chartCacheDir,

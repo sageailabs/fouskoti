@@ -58,6 +58,69 @@ func isFixedGitReference(ref *sourcev1.GitRepositoryRef) bool {
 	return false
 }
 
+func ParseGitRepoSubstitution(subst string) (*GitRepoSubstitution, error) {
+	if subst == "" {
+		return nil, nil
+	}
+
+	parts := strings.SplitN(subst, "#", 3)
+	var branch string
+	var path string
+	switch len(parts) {
+	case 3:
+		branch = parts[1]
+		path = parts[2]
+	case 2:
+		path = parts[1]
+	default:
+		return nil, fmt.Errorf(
+			"invalid git repo substitution %s, expected <repo-url>#[<branch>#]<path>",
+			subst,
+		)
+	}
+	var stat os.FileInfo
+	var err error
+	if stat, err = os.Stat(path); err != nil {
+		return nil, fmt.Errorf("unable to access working copy path %s: %w", path, err)
+	}
+	if !stat.IsDir() {
+		return nil, fmt.Errorf("working copy path %s is not a directory", path)
+	}
+	return &GitRepoSubstitution{
+		URL:    parts[0],
+		Branch: branch,
+		Path:   path,
+	}, nil
+}
+
+func (loader *gitRepoChartLoader) isSubstitutionTarget(
+	repo *sourcev1.GitRepository,
+	repoURL string,
+) bool {
+	if loader.gitRepoSubstitution == nil {
+		return false
+	}
+	if repo != nil {
+		repoURL = repo.Spec.URL
+	}
+	if loader.gitRepoSubstitution.URL != repoURL {
+		return false
+	}
+	repoBranch := ""
+	if repo != nil && repo.Spec.Reference != nil {
+		repoBranch = repo.Spec.Reference.Branch
+	}
+	if loader.gitRepoSubstitution.Branch == "" {
+		switch repoBranch {
+		case "", "master", "main":
+			return true
+		default:
+			return false
+		}
+	}
+	return loader.gitRepoSubstitution.Branch == repoBranch
+}
+
 func (loader *gitRepoChartLoader) cloneRepo(
 	repo *sourcev1.GitRepository,
 	repoURL string,
@@ -71,6 +134,9 @@ func (loader *gitRepoChartLoader) cloneRepo(
 		strings.ReplaceAll(normalizedGitRef.Name, "/", "%"),
 		normalizedGitRef.Commit,
 	)
+	if loader.isSubstitutionTarget(repo, repoURL) {
+		return loader.gitRepoSubstitution.Path, nil
+	}
 	// Git repositories checked out at different revisions should be cached at
 	// different paths in order to avoid cross revision contamination and Git
 	// repositories checked at non-fixed references (e.g., branches) cannot be

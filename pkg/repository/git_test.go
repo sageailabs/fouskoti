@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
@@ -117,6 +118,7 @@ var _ = ginkgo.Describe("GitRepository expansion", func() {
 			output,
 			nil,
 			nil,
+			nil,
 			1,
 			"",
 			false,
@@ -136,6 +138,135 @@ var _ = ginkgo.Describe("GitRepository expansion", func() {
 			"",
 		}, "\n"),
 		))
+	})
+
+	ginkgo.When("given git repository substitution", func() {
+		repoURL := "ssh://git@localhost/dummy.git"
+		input := []string{
+			"apiVersion: helm.toolkit.fluxcd.io/v2",
+			"kind: HelmRelease",
+			"metadata:",
+			"  namespace: testns",
+			"  name: test",
+			"spec:",
+			"  chart:",
+			"    spec:",
+			"      chart: charts/test-chart",
+			"      sourceRef:",
+			"        kind: GitRepository",
+			"        name: local",
+			"  values:",
+			"    data:",
+			"      foo: baz",
+			"---",
+			"apiVersion: source.toolkit.fluxcd.io/v1",
+			"kind: GitRepository",
+			"metadata:",
+			"  namespace: testns",
+			"  name: local",
+			"spec:",
+			"  url: " + repoURL,
+		}
+		var workingCopyRoot string
+
+		ginkgo.BeforeEach(func() {
+			var err error
+			workingCopyRoot, err = os.MkdirTemp("", "working-copy")
+			g.Expect(err).ToNot(gomega.HaveOccurred())
+			workingCopyFiles := maps.Clone(chartFiles)
+			workingCopyFiles["templates/configmap.yaml"] = strings.Replace(
+				workingCopyFiles["templates/configmap.yaml"],
+				"name: {{ .Release.Name }}-configmap",
+				"name: absolutely-different",
+				1,
+			)
+			err = createFileTree(
+				path.Join(workingCopyRoot, "charts/test-chart"),
+				workingCopyFiles,
+			)
+			g.Expect(err).ToNot(gomega.HaveOccurred())
+		})
+
+		ginkgo.AfterEach(func() {
+			err := os.RemoveAll(workingCopyRoot)
+			g.Expect(err).ToNot(gomega.HaveOccurred())
+		})
+
+		ginkgo.DescribeTable(
+			"substitutes Git repository for a local path when provided",
+			func(
+				url string,
+				branch string,
+				ref string,
+				expectedName string,
+				expectedCloneCount int,
+			) {
+				var repoRoot string
+				gitClient := &GitClientMock{}
+				gitClient.
+					On("Clone", mock.Anything, repoURL, mock.Anything).
+					Run(func(mock.Arguments) {
+						err := createFileTree(path.Join(repoRoot, "charts/test-chart"), chartFiles)
+						g.Expect(err).ToNot(gomega.HaveOccurred())
+					}).
+					Return(&git.Commit{Hash: git.Hash("dummy")}, nil)
+
+				expander := NewHelmReleaseExpander(
+					ctx,
+					logger,
+					func(
+						path string,
+						authOpts *git.AuthOptions,
+						clientOpts ...gogit.ClientOption,
+					) (GitClientInterface, error) {
+						repoRoot = path
+						return gitClient, nil
+					},
+					nil,
+				)
+				output := &bytes.Buffer{}
+				localInput := input
+				if ref != "" {
+					localInput = append(localInput, fmt.Sprintf("  ref: %s", ref))
+				}
+				err := expander.ExpandHelmReleases(
+					getDummySSHCreds(repoURL),
+					bytes.NewBufferString(strings.Join(localInput, "\n")),
+					output,
+					nil,
+					nil,
+					&GitRepoSubstitution{URL: url, Branch: branch, Path: workingCopyRoot},
+					1,
+					"",
+					false,
+				)
+				g.Expect(err).ToNot(gomega.HaveOccurred())
+				g.Expect(output.String()).To(gomega.Equal(strings.Join(
+					append(
+						localInput,
+						"---",
+						"# Source: test-chart/templates/configmap.yaml",
+						"apiVersion: v1",
+						"kind: ConfigMap",
+						"metadata:",
+						"  namespace: testns",
+						fmt.Sprintf("  name: %s", expectedName),
+						"data:",
+						"  foo: baz",
+						"",
+					),
+					"\n",
+				),
+				))
+				gitClient.AssertNumberOfCalls(ginkgo.GinkgoT(), "Clone", expectedCloneCount)
+			},
+			ginkgo.Entry("with repo and no branch", repoURL, "", "", "absolutely-different", 0),
+			ginkgo.Entry("with repo and main", repoURL, "", "{branch: main}", "absolutely-different", 0),
+			ginkgo.Entry("with repo and master", repoURL, "", "{branch: master}", "absolutely-different", 0),
+			ginkgo.Entry("with repo and matching branch", repoURL, "trunk", "{branch: trunk}", "absolutely-different", 0),
+			ginkgo.Entry("with repo and mismatching branch", repoURL, "main", "{branch: trunk}", "testns-test-configmap", 1),
+			ginkgo.Entry("with mismatching repo", "ssh://git@localhost/other.git", "", "", "testns-test-configmap", 1),
+		)
 	})
 
 	// Verifies that the repository files will be reused and not cloned twice,
@@ -221,6 +352,7 @@ var _ = ginkgo.Describe("GitRepository expansion", func() {
 			getDummySSHCreds(repoURL),
 			bytes.NewBufferString(input),
 			output,
+			nil,
 			nil,
 			nil,
 			1,
@@ -333,6 +465,7 @@ var _ = ginkgo.Describe("GitRepository expansion", func() {
 				output,
 				nil,
 				nil,
+				nil,
 				1,
 				cacheRoot,
 				false,
@@ -372,6 +505,7 @@ var _ = ginkgo.Describe("GitRepository expansion", func() {
 				getDummySSHCreds(repoURL),
 				bytes.NewBufferString(input),
 				output,
+				nil,
 				nil,
 				nil,
 				1,
@@ -549,6 +683,7 @@ var _ = ginkgo.Describe("GitRepository expansion", func() {
 				output,
 				nil,
 				nil,
+				nil,
 				1,
 				cacheRoot,
 				false,
@@ -683,6 +818,7 @@ var _ = ginkgo.Describe("GitRepository expansion", func() {
 			getDummySSHCreds(repoURL),
 			bytes.NewBufferString(input),
 			output,
+			nil,
 			nil,
 			nil,
 			1,
@@ -841,6 +977,7 @@ var _ = ginkgo.Describe("GitRepository expansion", func() {
 			output,
 			nil,
 			nil,
+			nil,
 			1,
 			cacheRoot,
 			false,
@@ -921,12 +1058,79 @@ var _ = ginkgo.Describe("GitRepository expansion", func() {
 			&bytes.Buffer{},
 			nil,
 			nil,
+			nil,
 			1,
 			"",
 			false,
 		)
 		g.Expect(err).To(
 			gomega.MatchError(gomega.ContainSubstring("unspecified error")),
+		)
+	})
+})
+
+var _ = ginkgo.Describe("ParseRepoSubstitution", func() {
+	var g gomega.Gomega
+	var repoDir string
+	var sshURL string = "ssh://git@localhost/repo.git"
+
+	ginkgo.BeforeEach(func() {
+		g = gomega.NewWithT(ginkgo.GinkgoT())
+		var err error
+		repoDir, err = os.MkdirTemp("", "repo-substitution")
+		g.Expect(err).ToNot(gomega.HaveOccurred())
+	})
+
+	ginkgo.It("accepts valid substitution", func() {
+		subst, err := ParseGitRepoSubstitution(sshURL + "#" + repoDir)
+		g.Expect(err).ToNot(gomega.HaveOccurred())
+		g.Expect(subst).ToNot(gomega.BeNil())
+		g.Expect(subst.URL).To(gomega.Equal(sshURL))
+		g.Expect(subst.Branch).To(gomega.Equal(""))
+		g.Expect(subst.Path).To(gomega.Equal(repoDir))
+	})
+
+	ginkgo.It("accepts empty string", func() {
+		subst, err := ParseGitRepoSubstitution("")
+		g.Expect(err).ToNot(gomega.HaveOccurred())
+		g.Expect(subst).To(gomega.BeNil())
+	})
+
+	ginkgo.It("accepts valid substitution with a branch", func() {
+		subst, err := ParseGitRepoSubstitution(
+			fmt.Sprintf("%s#%s#%s", sshURL, "branch", repoDir),
+		)
+		g.Expect(err).ToNot(gomega.HaveOccurred())
+		g.Expect(subst).ToNot(gomega.BeNil())
+		g.Expect(subst.URL).To(gomega.Equal(sshURL))
+		g.Expect(subst.Branch).To(gomega.Equal("branch"))
+		g.Expect(subst.Path).To(gomega.Equal(repoDir))
+	})
+
+	ginkgo.It("rejects invalid format", func() {
+		_, err := ParseGitRepoSubstitution("invalid-substitution")
+		g.Expect(err).To(gomega.MatchError(
+			"invalid git repo substitution invalid-substitution, " +
+				"expected <repo-url>#[<branch>#]<path>",
+		))
+	})
+
+	ginkgo.It("rejects non-existent dir", func() {
+		_, err := ParseGitRepoSubstitution(
+			fmt.Sprintf("%s#%s", sshURL, "/non/existent/dir"),
+		)
+		g.Expect(err).To(gomega.MatchError(
+			"unable to access working copy path /non/existent/dir: " +
+				"stat /non/existent/dir: no such file or directory",
+		))
+	})
+
+	ginkgo.It("rejects non-directory", func() {
+		file, err := os.CreateTemp(repoDir, "not-a-dir")
+		g.Expect(err).ToNot(gomega.HaveOccurred())
+		_, err = ParseGitRepoSubstitution(fmt.Sprintf("%s#%s", sshURL, file.Name()))
+		g.Expect(err).To(gomega.MatchError(
+			fmt.Sprintf("working copy path %s is not a directory", file.Name())),
 		)
 	})
 })

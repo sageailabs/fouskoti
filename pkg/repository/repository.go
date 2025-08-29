@@ -67,13 +67,14 @@ type gitClientFactoryFunc func(
 ) (GitClientInterface, error)
 
 type loaderConfig struct {
-	ctx               context.Context
-	logger            *slog.Logger
-	gitClientFactory  gitClientFactoryFunc
-	repoClientFactory repositoryClientFactoryFunc
-	cacheRoot         string
-	chartCache        map[string]*chart.Chart
-	credentials       Credentials
+	ctx                 context.Context
+	logger              *slog.Logger
+	gitClientFactory    gitClientFactoryFunc
+	repoClientFactory   repositoryClientFactoryFunc
+	gitRepoSubstitution *GitRepoSubstitution
+	cacheRoot           string
+	chartCache          map[string]*chart.Chart
+	credentials         Credentials
 }
 
 type repositoryLoaderFactory func(config loaderConfig) repositoryLoader
@@ -224,6 +225,7 @@ func loadRepositoryChart(
 	logger *slog.Logger,
 	gitClientFactory gitClientFactoryFunc,
 	repoClientFactory repositoryClientFactoryFunc,
+	gitRepoSubstitution *GitRepoSubstitution,
 	chartCacheDir string,
 	chartCache map[string]*chart.Chart,
 	credentials Credentials,
@@ -259,6 +261,7 @@ func loadRepositoryChart(
 			logger,
 			gitClientFactory,
 			repoClientFactory,
+			gitRepoSubstitution,
 			chartCacheDir,
 			chartCache,
 			credentials,
@@ -357,6 +360,7 @@ func expandHelmRelease(
 	repoClientFactory repositoryClientFactoryFunc,
 	kubeVersion *chartutil.KubeVersion,
 	apiVersions []string,
+	gitRepoSubstitution *GitRepoSubstitution,
 	chartCacheDir string,
 	chartCache map[string]*chart.Chart,
 	credentials Credentials,
@@ -386,6 +390,7 @@ func expandHelmRelease(
 		logger,
 		gitClientFactory,
 		repoClientFactory,
+		gitRepoSubstitution,
 		chartCacheDir,
 		chartCache,
 		credentials,
@@ -601,16 +606,17 @@ func getReleaseRepos(
 }
 
 type releaseRepoRenderer struct {
-	ctx               context.Context
-	logger            *slog.Logger
-	gitClientFactory  gitClientFactoryFunc
-	repoClientFactory repositoryClientFactoryFunc
-	kubeVersion       *chartutil.KubeVersion
-	apiVersions       []string
-	maxExpansions     int
-	chartCacheDir     string
-	chartCache        map[string]*chart.Chart
-	credentials       Credentials
+	ctx                 context.Context
+	logger              *slog.Logger
+	gitClientFactory    gitClientFactoryFunc
+	repoClientFactory   repositoryClientFactoryFunc
+	kubeVersion         *chartutil.KubeVersion
+	apiVersions         []string
+	maxExpansions       int
+	gitRepoSubstitution *GitRepoSubstitution
+	chartCacheDir       string
+	chartCache          map[string]*chart.Chart
+	credentials         Credentials
 }
 
 func newReleaseRepoRenderer(
@@ -621,21 +627,23 @@ func newReleaseRepoRenderer(
 	kubeVersion *chartutil.KubeVersion,
 	apiVersions []string,
 	maxExpansions int,
+	gitRepoSubstitution *GitRepoSubstitution,
 	chartCacheDir string,
 	chartCache map[string]*chart.Chart,
 	credentials Credentials,
 ) *releaseRepoRenderer {
 	return &releaseRepoRenderer{
-		ctx:               ctx,
-		logger:            logger,
-		gitClientFactory:  gitClientFactory,
-		repoClientFactory: repoClientFactory,
-		kubeVersion:       kubeVersion,
-		apiVersions:       apiVersions,
-		maxExpansions:     maxExpansions,
-		chartCacheDir:     chartCacheDir,
-		chartCache:        chartCache,
-		credentials:       credentials,
+		ctx:                 ctx,
+		logger:              logger,
+		gitClientFactory:    gitClientFactory,
+		repoClientFactory:   repoClientFactory,
+		kubeVersion:         kubeVersion,
+		apiVersions:         apiVersions,
+		maxExpansions:       maxExpansions,
+		gitRepoSubstitution: gitRepoSubstitution,
+		chartCacheDir:       chartCacheDir,
+		chartCache:          chartCache,
+		credentials:         credentials,
 	}
 }
 
@@ -658,6 +666,7 @@ func (renderer *releaseRepoRenderer) filterStep(
 			renderer.repoClientFactory,
 			renderer.kubeVersion,
 			renderer.apiVersions,
+			renderer.gitRepoSubstitution,
 			renderer.chartCacheDir,
 			renderer.chartCache,
 			renderer.credentials,
@@ -736,6 +745,12 @@ type HelmReleaseExpander struct {
 	repoClientFactory repositoryClientFactoryFunc
 }
 
+type GitRepoSubstitution struct {
+	URL    string
+	Branch string
+	Path   string
+}
+
 func NewHelmReleaseExpander(
 	ctx context.Context,
 	logger *slog.Logger,
@@ -756,6 +771,7 @@ func (expander *HelmReleaseExpander) ExpandHelmReleases(
 	output io.Writer,
 	kubeVersion *chartutil.KubeVersion,
 	apiVersions []string,
+	gitRepoSubstitution *GitRepoSubstitution,
 	maxExpansions int,
 	chartCacheDir string,
 	enableChartInMemoryCache bool,
@@ -788,6 +804,7 @@ func (expander *HelmReleaseExpander) ExpandHelmReleases(
 		kubeVersion,
 		apiVersions,
 		maxExpansions,
+		gitRepoSubstitution,
 		chartCacheDir,
 		chartCache,
 		credentials,
