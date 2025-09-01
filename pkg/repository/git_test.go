@@ -18,6 +18,8 @@ import (
 	"github.com/stretchr/testify/mock"
 )
 
+const repoURL = "ssh://git@localhost/dummy.git"
+
 func mapSlice[T, U any](slice []T, mapFunc func(T) U) []U {
 	result := make([]U, len(slice))
 	for i, item := range slice {
@@ -62,7 +64,6 @@ var _ = ginkgo.Describe("GitRepository expansion", func() {
 	})
 
 	ginkgo.It("expands HelmRelease from a chart in a repository", func() {
-		repoURL := "ssh://git@localhost/dummy.git"
 		input := strings.Join([]string{
 			"apiVersion: helm.toolkit.fluxcd.io/v2",
 			"kind: HelmRelease",
@@ -141,7 +142,6 @@ var _ = ginkgo.Describe("GitRepository expansion", func() {
 	})
 
 	ginkgo.When("given git repository substitution", func() {
-		repoURL := "ssh://git@localhost/dummy.git"
 		input := []string{
 			"apiVersion: helm.toolkit.fluxcd.io/v2",
 			"kind: HelmRelease",
@@ -273,7 +273,6 @@ var _ = ginkgo.Describe("GitRepository expansion", func() {
 	// even when referred from two different GitRepository resources but with the
 	// same repository URL.
 	ginkgo.It("caches charts from repository in memory", func() {
-		repoURL := "ssh://git@localhost/dummy.git"
 		input := strings.Join([]string{
 			"apiVersion: helm.toolkit.fluxcd.io/v2",
 			"kind: HelmRelease",
@@ -392,7 +391,6 @@ var _ = ginkgo.Describe("GitRepository expansion", func() {
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 			defer os.RemoveAll(cacheRoot)
 
-			repoURL := "ssh://git@localhost/dummy.git"
 			input := fmt.Sprintf(strings.Join([]string{
 				"apiVersion: helm.toolkit.fluxcd.io/v2",
 				"kind: HelmRelease",
@@ -598,7 +596,6 @@ var _ = ginkgo.Describe("GitRepository expansion", func() {
 				}, "\n"),
 			}
 
-			repoURL := "ssh://git@localhost/dummy.git"
 			input := fmt.Sprintf(strings.Join([]string{
 				"apiVersion: helm.toolkit.fluxcd.io/v2",
 				"kind: HelmRelease",
@@ -720,7 +717,6 @@ var _ = ginkgo.Describe("GitRepository expansion", func() {
 	)
 
 	ginkgo.It("handles relative dependency chart paths", func() {
-		repoURL := "ssh://git@localhost/dummy.git"
 		input := strings.Join([]string{
 			"apiVersion: helm.toolkit.fluxcd.io/v2",
 			"kind: HelmRelease",
@@ -856,7 +852,6 @@ var _ = ginkgo.Describe("GitRepository expansion", func() {
 		g.Expect(err).ToNot(gomega.HaveOccurred())
 		defer os.RemoveAll(cacheRoot)
 
-		repoURL := "ssh://git@localhost/dummy.git"
 		input := strings.Join([]string{
 			"apiVersion: helm.toolkit.fluxcd.io/v2",
 			"kind: HelmRelease",
@@ -1009,7 +1004,6 @@ var _ = ginkgo.Describe("GitRepository expansion", func() {
 	})
 
 	ginkgo.It("propagates cloning errors", func() {
-		repoURL := "ssh://git@localhost/dummy.git"
 		input := strings.Join([]string{
 			"apiVersion: helm.toolkit.fluxcd.io/v2",
 			"kind: HelmRelease",
