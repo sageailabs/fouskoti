@@ -1070,9 +1070,9 @@ var _ = ginkgo.Describe("GitRepository expansion", func() {
 })
 
 var _ = ginkgo.Describe("ParseRepoSubstitution", func() {
+	const sshURL = "ssh://git@localhost/repo.git"
 	var g gomega.Gomega
 	var repoDir string
-	var sshURL string = "ssh://git@localhost/repo.git"
 
 	ginkgo.BeforeEach(func() {
 		g = gomega.NewWithT(ginkgo.GinkgoT())
