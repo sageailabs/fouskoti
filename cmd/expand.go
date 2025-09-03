@@ -16,12 +16,12 @@ import (
 )
 
 type ExpandCommandOptions struct {
-	credentialsFileName string
-	kubeVersion         string
-	apiVersions         []string
-	maxExpansions       int
-	workingCopySubst    string
-	chartCacheDir       string
+	credentialsFileName     string
+	kubeVersion             string
+	apiVersions             []string
+	maxExpansions           int
+	workingCopySubstitution string
+	chartCacheDir           string
 }
 
 const ExpandCommandName = "expand"
@@ -80,11 +80,13 @@ func NewExpandCommand(options *ExpandCommandOptions) *cobra.Command {
 					}
 				}
 
-				subst, err := repository.ParseGitRepoSubstitution(options.workingCopySubst)
+				gitRepoSubstitution, err := repository.ParseGitRepoSubstitution(
+					options.workingCopySubstitution,
+				)
 				if err != nil {
 					return fmt.Errorf(
 						"invalid --working-copy-subst value %s: %w",
-						options.workingCopySubst,
+						options.workingCopySubstitution,
 						err,
 					)
 				}
@@ -107,7 +109,7 @@ func NewExpandCommand(options *ExpandCommandOptions) *cobra.Command {
 					os.Stdout,
 					kubeVersion,
 					options.apiVersions,
-					subst,
+					gitRepoSubstitution,
 					options.maxExpansions,
 					options.chartCacheDir,
 					true,
@@ -147,7 +149,7 @@ func NewExpandCommand(options *ExpandCommandOptions) *cobra.Command {
 		"Maximum number of expansions to perform recursively",
 	)
 	command.PersistentFlags().StringVarP(
-		&options.workingCopySubst,
+		&options.workingCopySubstitution,
 		"working-copy-subst",
 		"",
 		"",
