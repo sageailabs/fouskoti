@@ -96,8 +96,8 @@ value, err := yaml.GetStringOr(node, "spec.field", "default")
 - Git cloning via Flux's `@fluxcd/pkg/git/gogit` (not direct go-git calls)
 
 ### Helm Integration
-- Chart loading: `helm.sh/helm/v3/pkg/chart/loader`
-- Template rendering: `helm.sh/helm/v3/pkg/engine`
+- Chart loading: `helm.sh/helm/v4/pkg/chart/loader`
+- Template rendering: `helm.sh/helm/v4/pkg/engine`
 - Always passes `KubeVersion` and `APIVersions` to chart rendering for accurate capability checks
 
 ### Authentication

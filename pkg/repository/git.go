@@ -15,8 +15,8 @@ import (
 	"github.com/fluxcd/pkg/git/gogit"
 	"github.com/fluxcd/pkg/git/repository"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
-	"helm.sh/helm/v3/pkg/chart"
-	helmloader "helm.sh/helm/v3/pkg/chart/loader"
+	chart "helm.sh/helm/v4/pkg/chart/v2"
+	helmloader "helm.sh/helm/v4/pkg/chart/v2/loader"
 	"sigs.k8s.io/kustomize/kyaml/yaml"
 )
 

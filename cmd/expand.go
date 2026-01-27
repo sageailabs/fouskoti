@@ -10,7 +10,7 @@ import (
 	"github.com/fluxcd/pkg/git"
 	"github.com/fluxcd/pkg/git/gogit"
 	"github.com/spf13/cobra"
-	"helm.sh/helm/v3/pkg/chartutil"
+	"helm.sh/helm/v4/pkg/chart/common"
 
 	"github.com/sageailabs/fouskoti/pkg/repository"
 )
@@ -36,7 +36,7 @@ func NewExpandCommand(options *ExpandCommandOptions) *cobra.Command {
 			logger.Info("Starting expand command")
 
 			err := func() error {
-				kubeVersion, err := chartutil.ParseKubeVersion(options.kubeVersion)
+				kubeVersion, err := common.ParseKubeVersion(options.kubeVersion)
 				if err != nil {
 					return fmt.Errorf(
 						"invalid --kube-version value %s: %w",

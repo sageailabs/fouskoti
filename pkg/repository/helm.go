@@ -12,13 +12,14 @@ import (
 	"time"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
-	"helm.sh/helm/v3/pkg/chart"
-	helmloader "helm.sh/helm/v3/pkg/chart/loader"
-	"helm.sh/helm/v3/pkg/cli"
-	helmgetter "helm.sh/helm/v3/pkg/getter"
-	"helm.sh/helm/v3/pkg/helmpath"
-	"helm.sh/helm/v3/pkg/registry"
-	helmrepo "helm.sh/helm/v3/pkg/repo"
+	"helm.sh/helm/v4/pkg/chart/loader/archive"
+	chart "helm.sh/helm/v4/pkg/chart/v2"
+	helmloader "helm.sh/helm/v4/pkg/chart/v2/loader"
+	"helm.sh/helm/v4/pkg/cli"
+	helmgetter "helm.sh/helm/v4/pkg/getter"
+	"helm.sh/helm/v4/pkg/helmpath"
+	"helm.sh/helm/v4/pkg/registry"
+	helmrepo "helm.sh/helm/v4/pkg/repo/v1"
 	"sigs.k8s.io/kustomize/kyaml/yaml"
 )
 
@@ -213,7 +214,7 @@ func (loader *helmRepoChartLoader) loadRepositoryChart(
 			)
 		}
 
-		files, err := helmloader.LoadArchiveFiles(chartData)
+		files, err := archive.LoadArchiveFiles(chartData)
 		if err != nil {
 			return nil, fmt.Errorf(
 				"unable to load chart archive %s/%s in %s: %w",
