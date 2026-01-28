@@ -5,7 +5,6 @@ package repository
 import (
 	"fmt"
 	"io"
-	"maps"
 	"net/url"
 	"os"
 	"strings"
@@ -31,8 +30,7 @@ func (creds *RepositoryCreds) AsBytesMap() map[string][]byte {
 }
 
 func (creds RepositoryCreds) expandEnvVars() {
-	for key := range maps.Keys(creds.Credentials) {
-		value := creds.Credentials[key]
+	for key, value := range creds.Credentials {
 		if rest, found := strings.CutPrefix(value, "$"); found && len(rest) > 0 {
 			creds.Credentials[key] = os.Getenv(rest)
 		}
