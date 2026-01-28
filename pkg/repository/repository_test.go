@@ -29,8 +29,8 @@ import (
 	"github.com/onsi/gomega"
 	"github.com/onsi/gomega/format"
 	"github.com/stretchr/testify/mock"
-	"helm.sh/helm/v3/pkg/chartutil"
-	"helm.sh/helm/v3/pkg/repo"
+	"helm.sh/helm/v4/pkg/chart/common"
+	"helm.sh/helm/v4/pkg/repo/v1"
 )
 
 func createFileTree(treeRoot string, files map[string]string) error {
@@ -849,7 +849,7 @@ var _ = ginkgo.Describe("HelmRelease expansion check", func() {
 			},
 			nil,
 		)
-		kubeVersion, err := chartutil.ParseKubeVersion("1.222")
+		kubeVersion, err := common.ParseKubeVersion("1.222")
 		g.Expect(err).ToNot(gomega.HaveOccurred())
 		output := &bytes.Buffer{}
 		err = expander.ExpandHelmReleases(
@@ -874,7 +874,7 @@ var _ = ginkgo.Describe("HelmRelease expansion check", func() {
 			"  namespace: testns",
 			"  name: testns-test-configmap",
 			"data:",
-			"  kube-version: v1.222.0",
+			"  kube-version: v1.222",
 			"",
 		}, "\n"),
 		))

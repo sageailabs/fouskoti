@@ -15,9 +15,10 @@ import (
 	"github.com/Masterminds/semver/v3"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/google/go-containerregistry/pkg/authn"
-	"helm.sh/helm/v3/pkg/chart"
-	helmloader "helm.sh/helm/v3/pkg/chart/loader"
-	helmgetter "helm.sh/helm/v3/pkg/getter"
+	"helm.sh/helm/v4/pkg/chart/loader/archive"
+	chart "helm.sh/helm/v4/pkg/chart/v2"
+	helmloader "helm.sh/helm/v4/pkg/chart/v2/loader"
+	helmgetter "helm.sh/helm/v4/pkg/getter"
 	"sigs.k8s.io/kustomize/kyaml/yaml"
 
 	"github.com/fluxcd/pkg/auth/aws"
@@ -25,7 +26,7 @@ import (
 	"github.com/fluxcd/pkg/auth/gcp"
 	authutils "github.com/fluxcd/pkg/auth/utils"
 	"github.com/fluxcd/pkg/version"
-	"helm.sh/helm/v3/pkg/registry"
+	"helm.sh/helm/v4/pkg/registry"
 )
 
 var ociSchemePrefix string = fmt.Sprintf("%s://", registry.OCIScheme)
@@ -402,7 +403,7 @@ func (loader *ociRepoChartLoader) loadRepositoryChart(
 		)
 	}
 
-	files, err := helmloader.LoadArchiveFiles(chartData)
+	files, err := archive.LoadArchiveFiles(chartData)
 	if err != nil {
 		return nil, fmt.Errorf(
 			"unable to load chart files from archive for chart %s/%s in %s: %w",

@@ -21,10 +21,12 @@ import (
 	"github.com/fluxcd/pkg/git"
 	"github.com/fluxcd/pkg/git/gogit"
 	"github.com/fluxcd/pkg/git/repository"
-	"helm.sh/helm/v3/pkg/chart"
-	helmloader "helm.sh/helm/v3/pkg/chart/loader"
-	"helm.sh/helm/v3/pkg/chartutil"
-	"helm.sh/helm/v3/pkg/engine"
+	"helm.sh/helm/v4/pkg/chart/common"
+	commonutil "helm.sh/helm/v4/pkg/chart/common/util"
+	"helm.sh/helm/v4/pkg/chart/loader/archive"
+	chart "helm.sh/helm/v4/pkg/chart/v2"
+	chartutil "helm.sh/helm/v4/pkg/chart/v2/util"
+	"helm.sh/helm/v4/pkg/engine"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/kustomize/api/filters/namespace"
 	"sigs.k8s.io/kustomize/kyaml/kio"
@@ -203,7 +205,7 @@ func getCachePathForRepo(cacheRoot string, repoURL string, ephemeral bool) strin
 	return path.Join(parts...)
 }
 
-func saveChartFiles(files []*helmloader.BufferedFile, chartDir string) error {
+func saveChartFiles(files []*archive.BufferedFile, chartDir string) error {
 	for _, file := range files {
 		filePath := path.Join(chartDir, file.Name)
 		fileDir := path.Dir(filePath)
@@ -358,7 +360,7 @@ func expandHelmRelease(
 	logger *slog.Logger,
 	gitClientFactory gitClientFactoryFunc,
 	repoClientFactory repositoryClientFactoryFunc,
-	kubeVersion *chartutil.KubeVersion,
+	kubeVersion *common.KubeVersion,
 	apiVersions []string,
 	gitRepoSubstitution *GitRepoSubstitution,
 	chartCacheDir string,
@@ -408,7 +410,7 @@ func expandHelmRelease(
 	}
 
 	// Remove charts disabled by conditions.
-	err = chartutil.ProcessDependenciesWithMerge(chart, release.GetValues())
+	err = chartutil.ProcessDependencies(chart, release.GetValues())
 	if err != nil {
 		return nil, fmt.Errorf(
 			"unable to process dependencies for chart %s: %w",
@@ -417,7 +419,7 @@ func expandHelmRelease(
 		)
 	}
 
-	values, err := chartutil.CoalesceValues(chart, release.GetValues())
+	values, err := commonutil.CoalesceValues(chart, release.GetValues())
 	if err != nil {
 		return nil, fmt.Errorf(
 			"unable to coalesce values from the chart for release %s/%s: %w",
@@ -427,14 +429,14 @@ func expandHelmRelease(
 		)
 	}
 
-	capabilities := chartutil.DefaultCapabilities.Copy()
+	capabilities := common.DefaultCapabilities.Copy()
 	if kubeVersion != nil {
 		capabilities.KubeVersion = *kubeVersion
 	}
 	if len(apiVersions) > 0 {
 		capabilities.APIVersions = append(
 			capabilities.APIVersions,
-			chartutil.VersionSet(apiVersions)...,
+			common.VersionSet(apiVersions)...,
 		)
 	}
 
@@ -447,14 +449,14 @@ func expandHelmRelease(
 		releaseName = fmt.Sprintf("%s-%s", targetNamespace, release.Name)
 	}
 
-	options := chartutil.ReleaseOptions{
+	options := common.ReleaseOptions{
 		Name:      releaseName,
 		Namespace: targetNamespace,
 		Revision:  1,
 		IsInstall: true,
 		IsUpgrade: false,
 	}
-	valuesToRender, err := chartutil.ToRenderValues(chart, values, options, capabilities)
+	valuesToRender, err := commonutil.ToRenderValues(chart, values, options, capabilities)
 	if err != nil {
 		return nil, fmt.Errorf(
 			"unable to compose values to render Helm release %s/%s: %w",
@@ -610,7 +612,7 @@ type releaseRepoRenderer struct {
 	logger              *slog.Logger
 	gitClientFactory    gitClientFactoryFunc
 	repoClientFactory   repositoryClientFactoryFunc
-	kubeVersion         *chartutil.KubeVersion
+	kubeVersion         *common.KubeVersion
 	apiVersions         []string
 	maxExpansions       int
 	gitRepoSubstitution *GitRepoSubstitution
@@ -624,7 +626,7 @@ func newReleaseRepoRenderer(
 	logger *slog.Logger,
 	gitClientFactory gitClientFactoryFunc,
 	repoClientFactory repositoryClientFactoryFunc,
-	kubeVersion *chartutil.KubeVersion,
+	kubeVersion *common.KubeVersion,
 	apiVersions []string,
 	maxExpansions int,
 	gitRepoSubstitution *GitRepoSubstitution,
@@ -769,7 +771,7 @@ func (expander *HelmReleaseExpander) ExpandHelmReleases(
 	credentials Credentials,
 	input io.Reader,
 	output io.Writer,
-	kubeVersion *chartutil.KubeVersion,
+	kubeVersion *common.KubeVersion,
 	apiVersions []string,
 	gitRepoSubstitution *GitRepoSubstitution,
 	maxExpansions int,

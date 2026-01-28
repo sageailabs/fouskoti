@@ -9,7 +9,6 @@ import (
 	"os"
 	"strings"
 
-	"golang.org/x/exp/maps"
 	"gopkg.in/yaml.v3"
 )
 
@@ -31,8 +30,7 @@ func (creds *RepositoryCreds) AsBytesMap() map[string][]byte {
 }
 
 func (creds RepositoryCreds) expandEnvVars() {
-	for _, key := range maps.Keys(creds.Credentials) {
-		value := creds.Credentials[key]
+	for key, value := range creds.Credentials {
 		if rest, found := strings.CutPrefix(value, "$"); found && len(rest) > 0 {
 			creds.Credentials[key] = os.Getenv(rest)
 		}
