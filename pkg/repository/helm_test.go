@@ -471,6 +471,13 @@ var _ = ginkgo.Describe("HelmRepository expansion", func() {
 		))
 		// Wrapper expansion must also produce its own dependency output.
 		g.Expect(result).To(gomega.ContainSubstring(
+			"# Source: wrapper-chart/charts/dep-chart/templates/configmap.yaml",
+		))
+		g.Expect(result).To(gomega.ContainSubstring(
+			"name: testns-wrapper-release-dep-configmap",
+		))
+		// And the wrapper chart's own templates should still render.
+		g.Expect(result).To(gomega.ContainSubstring(
 			"name: testns-wrapper-release-wrapper-configmap",
 		))
 	})
