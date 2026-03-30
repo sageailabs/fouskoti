@@ -208,8 +208,7 @@ func copyChart(src *chart.Chart) *chart.Chart {
 		if md.Dependencies != nil {
 			deps := make([]*chart.Dependency, len(md.Dependencies))
 			for i, d := range md.Dependencies {
-				dd := *d
-				deps[i] = &dd
+				deps[i] = new(*d)
 			}
 			md.Dependencies = deps
 		}
