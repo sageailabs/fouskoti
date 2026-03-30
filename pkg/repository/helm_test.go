@@ -342,4 +342,144 @@ var _ = ginkgo.Describe("HelmRepository expansion", func() {
 			gomega.Equal(chartFiles["templates/configmap.yaml"]))
 	})
 
+	ginkgo.It("does not corrupt cached dependency chart parent pointer when used standalone", func() {
+		repoRoot, err := os.MkdirTemp("", "")
+		g.Expect(err).ToNot(gomega.HaveOccurred())
+		defer os.RemoveAll(repoRoot)
+		server, port, serverDone, err := serveDirectory(repoRoot, logger, nil)
+		g.Expect(err).ToNot(gomega.HaveOccurred())
+
+		// dep-chart is used as a dependency of wrapper-chart AND also
+		// expanded standalone. Both reference the same Helm repo version so
+		// they share a cache key.
+		depChartFiles := map[string]string{
+			"Chart.yaml": strings.Join([]string{
+				"apiVersion: v2",
+				"name: dep-chart",
+				"version: 0.1.0",
+			}, "\n"),
+			"values.yaml": "data:\n  key: default",
+			"templates/configmap.yaml": strings.Join([]string{
+				"apiVersion: v1",
+				"kind: ConfigMap",
+				"metadata:",
+				"  namespace: {{ .Release.Namespace }}",
+				"  name: {{ .Release.Name }}-dep-configmap",
+				"data: {{- .Values.data | toYaml | nindent 2 }}",
+			}, "\n"),
+		}
+
+		wrapperChartFiles := map[string]string{
+			"Chart.yaml": strings.Join([]string{
+				"apiVersion: v2",
+				"name: wrapper-chart",
+				"version: 0.1.0",
+				"dependencies:",
+				"- name: dep-chart",
+				fmt.Sprintf("  repository: http://localhost:%d", port),
+				"  version: 0.1.0",
+			}, "\n"),
+			"values.yaml": "wrapper: true",
+			"templates/configmap.yaml": strings.Join([]string{
+				"apiVersion: v1",
+				"kind: ConfigMap",
+				"metadata:",
+				"  namespace: {{ .Release.Namespace }}",
+				"  name: {{ .Release.Name }}-wrapper-configmap",
+				"data:",
+				"  wrapper: \"true\"",
+			}, "\n"),
+		}
+
+		err = createChartArchiveInDir("dep-chart", "0.1.0", depChartFiles, repoRoot)
+		g.Expect(err).ToNot(gomega.HaveOccurred())
+		err = createChartArchiveInDir("wrapper-chart", "0.1.0", wrapperChartFiles, repoRoot)
+		g.Expect(err).ToNot(gomega.HaveOccurred())
+		err = indexRepository(repoRoot, port)
+		g.Expect(err).ToNot(gomega.HaveOccurred())
+
+		// wrapper-release loads dep-chart as a dependency (sets parent).
+		// standalone-release loads dep-chart directly.
+		// Without the fix, the cache returns dep-chart with parent=wrapper-chart
+		// causing template paths like wrapper-chart/charts/dep-chart/...
+		input := strings.Join([]string{
+			"apiVersion: helm.toolkit.fluxcd.io/v2",
+			"kind: HelmRelease",
+			"metadata:",
+			"  namespace: testns",
+			"  name: wrapper-release",
+			"spec:",
+			"  chart:",
+			"    spec:",
+			"      chart: wrapper-chart",
+			"      version: 0.1.0",
+			"      sourceRef:",
+			"        kind: HelmRepository",
+			"        name: local",
+			"---",
+			"apiVersion: helm.toolkit.fluxcd.io/v2",
+			"kind: HelmRelease",
+			"metadata:",
+			"  namespace: testns",
+			"  name: standalone-release",
+			"spec:",
+			"  chart:",
+			"    spec:",
+			"      chart: dep-chart",
+			"      version: 0.1.0",
+			"      sourceRef:",
+			"        kind: HelmRepository",
+			"        name: local",
+			"  values:",
+			"    data:",
+			"      key: standalone",
+			"---",
+			"apiVersion: source.toolkit.fluxcd.io/v1",
+			"kind: HelmRepository",
+			"metadata:",
+			"  namespace: testns",
+			"  name: local",
+			"spec:",
+			fmt.Sprintf("  url: http://localhost:%d", port),
+		}, "\n")
+
+		expander := NewHelmReleaseExpander(ctx, logger, nil, nil)
+		output := &bytes.Buffer{}
+		err = expander.ExpandHelmReleases(
+			Credentials{},
+			bytes.NewBufferString(input),
+			output,
+			nil,
+			nil,
+			nil,
+			1,
+			"",
+			true,
+		)
+		g.Expect(err).ToNot(gomega.HaveOccurred())
+		err = stopServing(server, serverDone)
+		g.Expect(err).ToNot(gomega.HaveOccurred())
+
+		result := output.String()
+		// Standalone expansion must use dep-chart template paths, NOT
+		// wrapper-chart/charts/dep-chart paths.
+		g.Expect(result).To(gomega.ContainSubstring(
+			"# Source: dep-chart/templates/configmap.yaml",
+		))
+		g.Expect(result).To(gomega.ContainSubstring(
+			"name: testns-standalone-release-dep-configmap",
+		))
+		// Wrapper expansion must also produce its own dependency output.
+		g.Expect(result).To(gomega.ContainSubstring(
+			"# Source: wrapper-chart/charts/dep-chart/templates/configmap.yaml",
+		))
+		g.Expect(result).To(gomega.ContainSubstring(
+			"name: testns-wrapper-release-dep-configmap",
+		))
+		// And the wrapper chart's own templates should still render.
+		g.Expect(result).To(gomega.ContainSubstring(
+			"name: testns-wrapper-release-wrapper-configmap",
+		))
+	})
+
 })

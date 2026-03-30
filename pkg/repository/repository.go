@@ -195,6 +195,37 @@ func decodeToObject(node *yaml.RNode, out runtime.Object) error {
 	return nil
 }
 
+// copyChart creates a deep copy of a chart with its own Metadata, dependency
+// slice, and recursively copied dependency charts, so that mutations like
+// ProcessDependencies and AddDependency don't corrupt the in-memory cache.
+func copyChart(src *chart.Chart) *chart.Chart {
+	cpy := *src
+
+	// Deep-copy Metadata since ProcessDependencies mutates
+	// Metadata.Dependencies (removes disabled entries, flips Enabled flags).
+	if src.Metadata != nil {
+		md := *src.Metadata
+		if md.Dependencies != nil {
+			deps := make([]*chart.Dependency, len(md.Dependencies))
+			for i, d := range md.Dependencies {
+				deps[i] = new(*d)
+			}
+			md.Dependencies = deps
+		}
+		cpy.Metadata = &md
+	}
+
+	// Recursively copy each dependency chart so that nested mutations
+	// (e.g., parent pointer changes, recursive ProcessDependencies) don't
+	// leak back into the cached originals.
+	copiedDeps := make([]*chart.Chart, len(src.Dependencies()))
+	for i, dep := range src.Dependencies() {
+		copiedDeps[i] = copyChart(dep)
+	}
+	cpy.SetDependencies(copiedDeps...)
+	return &cpy
+}
+
 func getCachePathForRepo(cacheRoot string, repoURL string, ephemeral bool) string {
 	urlPath := strings.ReplaceAll(strings.TrimSuffix(repoURL, "/"), "/", "#")
 	parts := []string{cacheRoot}
@@ -350,7 +381,7 @@ func loadChartDependencies(
 				err,
 			)
 		}
-		parentChart.AddDependency(dependencyChart)
+		parentChart.AddDependency(copyChart(dependencyChart))
 	}
 	return nil
 }
