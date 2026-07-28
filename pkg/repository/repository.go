@@ -471,18 +471,9 @@ func expandHelmRelease(
 		)
 	}
 
-	targetNamespace := release.Spec.TargetNamespace
-	if targetNamespace == "" {
-		targetNamespace = release.Namespace
-	}
-	releaseName := release.Spec.ReleaseName
-	if releaseName == "" {
-		releaseName = fmt.Sprintf("%s-%s", targetNamespace, release.Name)
-	}
-
 	options := common.ReleaseOptions{
-		Name:      releaseName,
-		Namespace: targetNamespace,
+		Name:      release.GetReleaseName(),
+		Namespace: release.GetReleaseNamespace(),
 		Revision:  1,
 		IsInstall: true,
 		IsUpgrade: false,
